@@ -187,7 +187,6 @@ def draw_svg_lk(house_data):
 
     for i in range(1, 13):
         px, py = pos[i]; ox, oy = offsets[i]
-        # Draw fixed Kal Purush numbers as requested in Ledger
         svg += f'<text x="{px + ox}" y="{py + oy + 4}" text-anchor="middle" font-size="11" font-family="Arial" fill="#c0392b">{i}</text>\n'
         planets = house_data.get(i, [])
         if planets:
@@ -215,19 +214,22 @@ HTML_PAGE = """
         .modal { background-color: rgba(0,0,0,0.5); }
         
         /* EXACT PRINT STYLING */
+        @media screen {
+            #print-root { display: none !important; }
+        }
         @media print {
-            .print-hide { display: none !important; }
+            body > *:not(#print-root) { display: none !important; }
             body { background-color: #ffffff !important; color: #000000 !important; padding: 0 !important; margin: 0 !important; }
             * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-            #dashboard-screen { padding: 0 !important; max-width: 100% !important; margin: 0 !important; box-shadow: none !important; }
-            .bg-\\[\\#1e3a8a\\] { background-color: #1e3a8a !important; color: #ffffff !important; }
-            .border-b, .border-gray-200 { border-color: #cccccc !important; }
+            #print-root { display: block !important; position: absolute; top: 0; left: 0; width: 100%; }
         }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans relative">
 
-    <div id="input-screen" class="min-h-screen flex items-center justify-center p-4">
+    <div id="print-root"></div>
+
+    <div id="input-screen" class="min-h-screen flex items-center justify-center p-4 print-hide">
         <div class="bg-white rounded-xl shadow-xl p-8 max-w-3xl w-full border border-gray-200">
             <h1 class="text-3xl font-extrabold text-center text-blue-900 mb-8 tracking-wide drop-shadow-sm">KP Astrology Pro Setup</h1>
             
@@ -277,26 +279,26 @@ HTML_PAGE = """
         </div>
     </div>
 
-    <div id="dashboard-screen" class="hidden p-4 max-w-7xl mx-auto">
+    <div id="dashboard-screen" class="hidden p-4 max-w-7xl mx-auto print-hide">
         <div class="flex flex-col md:flex-row justify-between items-center mb-4 bg-[#1e3a8a] text-white p-4 rounded shadow gap-4">
             <div>
                 <h2 class="text-2xl font-bold tracking-wide" id="d-name">Client Name</h2>
                 <p class="text-sm text-blue-200 font-semibold mt-1" id="d-details">DOB | Time | Place</p>
             </div>
-            <div class="flex items-center gap-3 flex-wrap justify-end print-hide">
+            <div class="flex items-center gap-3 flex-wrap justify-end">
                 <button onclick="generateMasterReport()" class="bg-blue-500 hover:bg-blue-600 px-3 py-1 rounded font-bold text-sm shadow text-white">Print Report 📄</button>
                 <button onclick="openModal('forward-modal')" class="bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded font-bold text-sm shadow">Forward Check 🔎</button>
                 <button onclick="openModal('ssub-modal')" class="bg-teal-500 hover:bg-teal-600 px-3 py-1 rounded font-bold text-sm shadow">S-Sub Tracker ⏱️</button>
                 <button onclick="openModal('retro-modal')" class="bg-purple-500 hover:bg-purple-600 px-3 py-1 rounded font-bold text-sm shadow">Retro Report 🔄</button>
                 <div class="flex flex-col border-l border-blue-400 pl-3 ml-1">
                     <label class="text-xs font-bold text-blue-200">Lal Kitab Age</label>
-                    <input type="number" id="d-age" value="51" class="text-black w-16 p-1 rounded font-bold focus:outline-none" onchange="fetchData()">
+                    <input type="number" id="d-age" class="text-black w-16 p-1 rounded font-bold focus:outline-none" onchange="fetchData()">
                 </div>
                 <button onclick="backToInput()" class="bg-red-500 hover:bg-red-600 px-4 py-2 rounded font-bold mt-4 md:mt-0 shadow ml-2">Close</button>
             </div>
         </div>
 
-        <div class="bg-white p-4 rounded shadow mb-6 flex flex-wrap gap-4 items-center justify-between border border-gray-200 print-hide">
+        <div class="bg-white p-4 rounded shadow mb-6 flex flex-wrap gap-4 items-center justify-between border border-gray-200">
             <div class="flex items-center gap-2">
                 <label class="font-bold text-sm text-blue-900">Mode:</label>
                 <select id="ctrl-mode" class="border border-gray-300 p-1 rounded bg-gray-50 focus:outline-none" onchange="modeChanged()">
@@ -326,7 +328,7 @@ HTML_PAGE = """
             <div class="font-bold text-red-600 bg-red-50 border border-red-100 px-3 py-1 rounded" id="current-chart-time">--</div>
         </div>
 
-        <div id="loader" class="hidden text-center text-blue-600 font-bold text-xl my-8 print-hide">Calculating Ephemeris Data... Please wait.</div>
+        <div id="loader" class="hidden text-center text-blue-600 font-bold text-xl my-8">Calculating Ephemeris Data... Please wait.</div>
 
         <div id="content-wrap" class="hidden">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -335,7 +337,7 @@ HTML_PAGE = """
                 <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-red-900 mb-2 tracking-wide" id="title-lk">Lal Kitab Varshphal</h3><div id="svg-lk"></div></div>
             </div>
 
-            <div class="border-b border-gray-300 mb-6 flex space-x-4 overflow-x-auto print-hide">
+            <div class="border-b border-gray-300 mb-6 flex space-x-4 overflow-x-auto">
                 <button onclick="switchTab('tab-pos', this)" class="tab-btn active px-4 py-2 border-b-2 border-blue-500 text-blue-600 font-bold whitespace-nowrap">Positions</button>
                 <button onclick="switchTab('tab-nadi', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap">Nadi</button>
                 <button onclick="switchTab('tab-hits', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap">Degree Hits</button>
@@ -574,6 +576,18 @@ HTML_PAGE = """
         function updateTimeDisplay() {
             let obj = getFormattedCalc();
             document.getElementById('current-chart-time').innerText = `Chart Time: ${obj.d} ${obj.t}`;
+            
+            // Auto-calculate Lal Kitab Age (Running Year) based on Current Chart Time
+            if (natalDateStr && natalTimeStr) {
+                let natal = parseDateStr(natalDateStr, natalTimeStr);
+                let ageCompleted = calcDateObj.getFullYear() - natal.getFullYear();
+                let m = calcDateObj.getMonth() - natal.getMonth();
+                if (m < 0 || (m === 0 && calcDateObj.getDate() < natal.getDate())) {
+                    ageCompleted--;
+                }
+                let runningAge = ageCompleted >= 0 ? ageCompleted + 1 : 1;
+                document.getElementById('d-age').value = runningAge;
+            }
         }
 
         function backToInput() {
@@ -719,26 +733,26 @@ HTML_PAGE = """
             try {
                 let vastuP2cRows = d.vastu_p2c.map(r => {
                     let rowData = [...r];
-                    let header = rowData.shift();
-                    let cells = rowData.map(c => {
+                    let header = rowData[0];
+                    let cells = rowData.slice(1).map(c => {
                         let style = "";
                         let val = c;
                         if(c.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; val = c.replace('*',''); }
                         else if(c.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; val = c.replace('+',''); }
-                        return `<td style="border: 1px solid #ccc; padding: 3px; ${style}">${val}</td>`;
+                        return `<td style="border: 1px solid #ccc; padding: 2px; ${style}">${val}</td>`;
                     }).join('');
-                    return `<tr><td style="border: 1px solid #ccc; padding: 3px; font-weight:bold; background-color:#f0f0f0;">${header}</td>${cells}</tr>`;
+                    return `<tr><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold; background-color:#f0f0f0;">${header}</td>${cells}</tr>`;
                 }).join('');
 
                 let vastuP2pRows = d.vastu_p2p.map(r => {
                     let color = r[4].includes('*') ? 'color:#c0392b;' : r[4].includes('+') ? 'color:#27ae60;' : '';
                     let val = r[4].replace('*','').replace('+','');
                     return `<tr>
-                        <td style="border: 1px solid #ccc; padding: 3px;"><b>${r[0]}</b></td>
-                        <td style="border: 1px solid #ccc; padding: 3px;">${r[1]}</td>
-                        <td style="border: 1px solid #ccc; padding: 3px;"><b>${r[2]}</b></td>
-                        <td style="border: 1px solid #ccc; padding: 3px;">${r[3]}</td>
-                        <td style="border: 1px solid #ccc; padding: 3px; ${color} font-weight:bold;">${val}</td>
+                        <td style="border: 1px solid #ccc; padding: 2px;"><b>${r[0]}</b></td>
+                        <td style="border: 1px solid #ccc; padding: 2px;">${r[1]}</td>
+                        <td style="border: 1px solid #ccc; padding: 2px;"><b>${r[2]}</b></td>
+                        <td style="border: 1px solid #ccc; padding: 2px;">${r[3]}</td>
+                        <td style="border: 1px solid #ccc; padding: 2px; ${color} font-weight:bold;">${val}</td>
                     </tr>`;
                 }).join('');
 
@@ -750,7 +764,7 @@ HTML_PAGE = """
                     <title>${name} - Master Report</title>
                     <style>
                         @page { margin: 10mm; size: A4; }
-                        body { font-family: 'Verdana', sans-serif; font-size: 9px; color: #000; background: #fff; line-height: 1.2; }
+                        body { font-family: 'Verdana', sans-serif; font-size: 8px; color: #000; background: #fff; line-height: 1.2; }
                         .header { text-align: center; border-bottom: 2px solid #0d2538; padding-bottom: 5px; margin-bottom: 10px; }
                         .header h1 { margin: 0; font-size: 16px; color: #0d2538; text-transform: uppercase; }
                         .header p { margin: 3px 0; font-size: 10px; }
@@ -761,8 +775,8 @@ HTML_PAGE = """
                         .section { margin-bottom: 15px; page-break-inside: avoid; border: 1px solid #0d2538; border-radius: 4px; }
                         .section h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; text-align: center;}
                         table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 2px; }
-                        th { background-color: #0d2538; color: white; font-weight: bold; padding: 3px; border: 1px solid #ccc; }
-                        td { border: 1px solid #ccc; padding: 3px; }
+                        th { background-color: #0d2538; color: white; font-weight: bold; padding: 2px; border: 1px solid #ccc; }
+                        td { border: 1px solid #ccc; padding: 2px; }
                         tr:nth-child(even) td { background-color: #f9f9f9; }
                     </style>
                 </head>
@@ -806,14 +820,14 @@ HTML_PAGE = """
 
                     <div class="section" style="border-color: #1e8449;">
                         <h2 style="background-color: #1e8449;">Astro Vastu</h2>
-                        <div style="padding: 5px;">
-                            <h3 style="margin: 0 0 5px 0; font-size: 10px; color: #0d2538;">Planet to House Aspects</h3>
-                            <table>
-                                <tr><th style="background-color: #eaecee; color:#0d2538;">Direction</th>${d.vastu_dirs.map(dir => `<th style="background-color: #82e0aa; color:black;">${dir}</th>`).join('')}</tr>
+                        <div style="padding: 3px;">
+                            <h3 style="margin: 0 0 3px 0; font-size: 9px; color: #0d2538;">Planet to House Aspects</h3>
+                            <table style="table-layout: fixed; word-wrap: break-word;">
+                                <tr><th style="background-color: #eaecee; color:#0d2538;">Dir</th>${d.vastu_dirs.map(dir => `<th style="background-color: #82e0aa; color:black;">${dir}</th>`).join('')}</tr>
                                 ${vastuP2cRows}
                             </table>
                             
-                            <h3 style="margin: 10px 0 5px 0; font-size: 10px; color: #0d2538;">Planet to Planet Aspects</h3>
+                            <h3 style="margin: 8px 0 3px 0; font-size: 9px; color: #0d2538;">Planet to Planet Aspects</h3>
                             <table>
                                 <tr><th>FROM</th><th style="background-color:#eaecee; color:#000;">DIR 1</th><th>TO</th><th style="background-color:#eaecee; color:#000;">DIR 2</th><th>ASP</th></tr>
                                 ${vastuP2pRows}
@@ -918,8 +932,9 @@ HTML_PAGE = """
                 
                 let tbHtml = '';
                 for(let r of d.vastu_p2c) {
-                    tbHtml += `<tr class="border-b border-gray-200 hover:bg-gray-50"><td class="font-bold bg-gray-100 p-2 border border-gray-200 text-gray-800">${r.shift()}</td>`;
-                    for(let cell of r) {
+                    let rowData = [...r];
+                    tbHtml += `<tr class="border-b border-gray-200 hover:bg-gray-50"><td class="font-bold bg-gray-100 p-2 border border-gray-200 text-gray-800">${rowData[0]}</td>`;
+                    for(let cell of rowData.slice(1)) {
                         let style = "";
                         if(cell.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; cell=cell.replace('*','');}
                         else if(cell.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; cell=cell.replace('+','');}
