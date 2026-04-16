@@ -187,6 +187,7 @@ def draw_svg_lk(house_data):
 
     for i in range(1, 13):
         px, py = pos[i]; ox, oy = offsets[i]
+        # Draw fixed Kal Purush numbers as requested in Ledger
         svg += f'<text x="{px + ox}" y="{py + oy + 4}" text-anchor="middle" font-size="11" font-family="Arial" fill="#c0392b">{i}</text>\n'
         planets = house_data.get(i, [])
         if planets:
@@ -196,6 +197,107 @@ def draw_svg_lk(house_data):
                 cY += 15
     svg += '</svg>'
     return svg
+
+def calculate_dasha(moon_lon, start_dt, current_eval_dt):
+    nak_span = 360 / 27
+    nak_val = moon_lon / nak_span
+    idx = int(nak_val) % 9
+    rem_prc = 1.0 - (nak_val - int(nak_val))
+    
+    bal_days = rem_prc * YRS[idx] * 365.2425
+    bal_y = int(bal_days // 365.2425)
+    rem_m = (bal_days % 365.2425) / 30.436875
+    bal_m = int(rem_m)
+    bal_d = int((rem_m - bal_m) * 30.436875)
+    balance_str = f"Balance of Dasha: {LORDS[idx]} {bal_y}Y {bal_m}M {bal_d}D"
+    
+    dasha_list = []
+    md_start = start_dt - timedelta(days=(1 - rem_prc) * YRS[idx] * 365.2425)
+    
+    # 5-Level Deep Dasha Loop
+    for i in range(9):
+        md_idx = (idx + i) % 9
+        md_days = YRS[md_idx] * 365.2425
+        md_end = md_start + timedelta(days=md_days)
+        md_active = md_start <= current_eval_dt < md_end
+        
+        ad_list = []
+        ad_start = md_start
+        for j in range(9):
+            ad_idx = (md_idx + j) % 9
+            ad_days = md_days * (YRS[ad_idx] / 120.0)
+            ad_end = ad_start + timedelta(days=ad_days)
+            ad_active = ad_start <= current_eval_dt < ad_end
+            
+            pd_list = []
+            pd_start = ad_start
+            for k in range(9):
+                pd_idx = (ad_idx + k) % 9
+                pd_days = ad_days * (YRS[pd_idx] / 120.0)
+                pd_end = pd_start + timedelta(days=pd_days)
+                pd_active = pd_start <= current_eval_dt < pd_end
+                
+                sd_list = []
+                sd_start = pd_start
+                for l in range(9):
+                    sd_idx = (pd_idx + l) % 9
+                    sd_days = pd_days * (YRS[sd_idx] / 120.0)
+                    sd_end = sd_start + timedelta(days=sd_days)
+                    sd_active = sd_start <= current_eval_dt < sd_end
+                    
+                    prd_list = []
+                    prd_start = sd_start
+                    for m in range(9):
+                        prd_idx = (sd_idx + m) % 9
+                        prd_days = sd_days * (YRS[prd_idx] / 120.0)
+                        prd_end = prd_start + timedelta(days=prd_days)
+                        prd_active = prd_start <= current_eval_dt < prd_end
+                        
+                        prd_list.append({
+                            "lord": LORDS[prd_idx],
+                            "start": prd_start.strftime("%d-%m-%Y %H:%M"),
+                            "end": prd_end.strftime("%d-%m-%Y %H:%M"),
+                            "active": prd_active
+                        })
+                        prd_start = prd_end
+                    
+                    sd_list.append({
+                        "lord": LORDS[sd_idx],
+                        "start": sd_start.strftime("%d-%m-%Y %H:%M"),
+                        "end": sd_end.strftime("%d-%m-%Y %H:%M"),
+                        "active": sd_active,
+                        "subs": prd_list
+                    })
+                    sd_start = sd_end
+                    
+                pd_list.append({
+                    "lord": LORDS[pd_idx],
+                    "start": pd_start.strftime("%d-%m-%Y"),
+                    "end": pd_end.strftime("%d-%m-%Y"),
+                    "active": pd_active,
+                    "subs": sd_list
+                })
+                pd_start = pd_end
+                
+            ad_list.append({
+                "lord": LORDS[ad_idx],
+                "start": ad_start.strftime("%d-%m-%Y"),
+                "end": ad_end.strftime("%d-%m-%Y"),
+                "active": ad_active,
+                "subs": pd_list
+            })
+            ad_start = ad_end
+            
+        dasha_list.append({
+            "lord": LORDS[md_idx],
+            "start": md_start.strftime("%d-%m-%Y"),
+            "end": md_end.strftime("%d-%m-%Y"),
+            "active": md_active,
+            "subs": ad_list
+        })
+        md_start = md_end
+        
+    return dasha_list, balance_str
 
 # --- HTML/JS SPA FRONTEND ---
 HTML_PAGE = """
@@ -212,31 +314,18 @@ HTML_PAGE = """
         th, td { border: 1px solid #e5e7eb; padding: 0.5rem; text-align: center; }
         th { background-color: #1e3a8a; color: white; }
         .modal { background-color: rgba(0,0,0,0.5); }
-        
-        /* EXACT PRINT STYLING */
-        @media screen {
-            #print-root { display: none !important; }
-        }
-        @media print {
-            body > *:not(#print-root) { display: none !important; }
-            body { background-color: #ffffff !important; color: #000000 !important; padding: 0 !important; margin: 0 !important; }
-            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-            #print-root { display: block !important; position: absolute; top: 0; left: 0; width: 100%; }
-        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans relative">
 
-    <div id="print-root"></div>
-
-    <div id="input-screen" class="min-h-screen flex items-center justify-center p-4 print-hide">
+    <div id="input-screen" class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-xl p-8 max-w-3xl w-full border border-gray-200">
             <h1 class="text-3xl font-extrabold text-center text-blue-900 mb-8 tracking-wide drop-shadow-sm">KP Astrology Pro Setup</h1>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <div><label class="block text-sm font-bold text-blue-900 mb-1">Name</label><input type="text" id="i-name" value="Happy" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
-                <div><label class="block text-sm font-bold text-blue-900 mb-1">DOB (DD-MM-YYYY)</label><input type="text" id="i-dob" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
-                <div><label class="block text-sm font-bold text-blue-900 mb-1">Time (HH:MM:SS)</label><input type="text" id="i-time" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">DOB (DD-MM-YYYY)</label><input type="text" id="i-dob" value="01-09-1975" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">Time (HH:MM:SS)</label><input type="text" id="i-time" value="05:16:00" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
                 
                 <div>
                     <label class="block text-sm font-bold text-blue-900 mb-1">City</label>
@@ -279,7 +368,7 @@ HTML_PAGE = """
         </div>
     </div>
 
-    <div id="dashboard-screen" class="hidden p-4 max-w-7xl mx-auto print-hide">
+    <div id="dashboard-screen" class="hidden p-4 max-w-7xl mx-auto">
         <div class="flex flex-col md:flex-row justify-between items-center mb-4 bg-[#1e3a8a] text-white p-4 rounded shadow gap-4">
             <div>
                 <h2 class="text-2xl font-bold tracking-wide" id="d-name">Client Name</h2>
@@ -342,6 +431,7 @@ HTML_PAGE = """
                 <button onclick="switchTab('tab-nadi', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap">Nadi</button>
                 <button onclick="switchTab('tab-hits', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap">Degree Hits</button>
                 <button onclick="switchTab('tab-vastu', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap text-green-700">Astro Vastu</button>
+                <button onclick="switchTab('tab-dasha', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap text-purple-700">Vimshottari Dasha</button>
             </div>
 
             <div id="tab-pos" class="tab-pane grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -371,8 +461,6 @@ HTML_PAGE = """
                             <th class="p-3 border border-blue-800">ST-SIGNIFS</th>
                             <th class="p-3 border border-blue-800">SUB LORD</th>
                             <th class="p-3 border border-blue-800">SB-SIGNIFS</th>
-                            <th class="p-3 border border-blue-800">STAR LORD OF</th>
-                            <th class="p-3 border border-blue-800">SUB LORD OF</th>
                         </tr>
                     </thead>
                     <tbody id="tb-nadi"></tbody>
@@ -399,7 +487,7 @@ HTML_PAGE = """
             <div id="tab-vastu" class="tab-pane hidden grid grid-cols-1 gap-6">
                 <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
                     <h3 class="font-bold text-green-900 p-3 bg-gray-50 border-b">Planet to House (Directional Aspects)</h3>
-                    <table class="w-full text-xs text-center border-collapse">
+                    <table class="w-full text-xs text-center border-collapse" style="table-layout: fixed; word-wrap: break-word;">
                         <thead id="th-vastu-p2c"></thead>
                         <tbody id="tb-vastu-p2c"></tbody>
                     </table>
@@ -412,10 +500,19 @@ HTML_PAGE = """
                     </table>
                 </div>
             </div>
+            
+            <div id="tab-dasha" class="tab-pane hidden bg-white shadow rounded p-4 overflow-auto max-h-[600px] border border-gray-200">
+                <h3 class="font-bold text-purple-900 mb-2">Vimshottari Dasha (5 Levels)</h3>
+                <p id="dasha-bal" class="font-bold text-red-600 mb-4"></p>
+                <table class="w-full text-sm text-left border-collapse">
+                    <thead class="bg-[#1e3a8a] text-white sticky top-0"><tr><th class="p-2 border border-blue-800 w-1/2">Dasha Lord</th><th class="p-2 border border-blue-800 w-1/4">Start Date</th><th class="p-2 border border-blue-800 w-1/4">End Date</th></tr></thead>
+                    <tbody id="tb-dasha"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <div id="ssub-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4 print-hide">
+    <div id="ssub-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
         <div class="bg-gray-100 rounded-lg shadow-2xl p-6 max-w-5xl w-full border-4 border-teal-500 relative flex flex-col max-h-[90vh]">
             <button onclick="closeModal('ssub-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
             <h2 class="text-2xl font-bold text-teal-800 mb-4 tracking-wide">Planet Sub-Sub Lord Tracker Matrix</h2>
@@ -427,12 +524,11 @@ HTML_PAGE = """
             
             <div id="ss-loader" class="hidden text-center text-teal-600 font-bold py-4 shrink-0">Calculating exact matrix minute-by-minute... This may take a few seconds.</div>
             
-            <div class="overflow-y-auto border border-gray-300 rounded p-4 bg-white flex-1" id="ss-body">
-                </div>
+            <div class="overflow-y-auto border border-gray-300 rounded p-4 bg-white flex-1" id="ss-body"></div>
         </div>
     </div>
 
-    <div id="forward-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4 print-hide">
+    <div id="forward-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
         <div class="bg-[#fcf5cd] rounded-md shadow-2xl p-6 max-w-2xl w-full relative border-2 border-yellow-200">
             <button onclick="closeModal('forward-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
             <h2 class="text-2xl font-bold text-[#b91c1c] mb-6 tracking-wide">Forward Checking of Planet</h2>
@@ -463,24 +559,18 @@ HTML_PAGE = """
             </div>
             
             <button onclick="runForwardCheck()" class="w-full bg-[#cbd5e1] hover:bg-[#94a3b8] text-black font-bold py-3 rounded shadow transition-colors">Start Checking (Max 100 Yrs)</button>
-            
             <p id="fc-res" class="mt-6 font-bold text-center text-lg text-[#1d4ed8]"></p>
         </div>
     </div>
 
-    <div id="retro-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4 print-hide">
+    <div id="retro-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-lg shadow-2xl p-6 max-w-lg w-full border border-gray-300 relative">
             <button onclick="closeModal('retro-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
             <h2 class="text-2xl font-bold text-purple-800 mb-6 tracking-wide">Planet Retro/Direct Report</h2>
             <div class="grid grid-cols-3 gap-3 mb-6">
                 <div><label class="text-xs font-bold text-gray-700 mb-1 block">From (DD-MM-YYYY)</label><input type="text" id="rr-start" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400"></div>
                 <div><label class="text-xs font-bold text-gray-700 mb-1 block">To (DD-MM-YYYY)</label><input type="text" id="rr-end" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400"></div>
-                <div>
-                    <label class="text-xs font-bold text-gray-700 mb-1 block">Planet</label>
-                    <select id="rr-planet" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400">
-                        <option>Mercury</option><option>Venus</option><option>Mars</option><option>Jupiter</option><option>Saturn</option>
-                    </select>
-                </div>
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">Planet</label><select id="rr-planet" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400"><option>Mercury</option><option>Venus</option><option>Mars</option><option>Jupiter</option><option>Saturn</option></select></div>
             </div>
             <button onclick="runRetroReport()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded mb-4 shadow transition-colors">Generate Report</button>
             <div class="h-64 overflow-y-auto border border-gray-200 rounded">
@@ -496,14 +586,6 @@ HTML_PAGE = """
         let calcDateObj = new Date();
         let natalDateStr = "";
         let natalTimeStr = "";
-
-        // Set App Initial Load to CURRENT Time
-        window.addEventListener('DOMContentLoaded', () => {
-            let now = new Date();
-            let pad = (n) => n.toString().padStart(2, '0');
-            document.getElementById('i-dob').value = `${pad(now.getDate())}-${pad(now.getMonth()+1)}-${now.getFullYear()}`;
-            document.getElementById('i-time').value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-        });
 
         function parseDateStr(dateStr, timeStr) {
             let dmy = dateStr.split('-');
@@ -577,12 +659,14 @@ HTML_PAGE = """
             let obj = getFormattedCalc();
             document.getElementById('current-chart-time').innerText = `Chart Time: ${obj.d} ${obj.t}`;
             
-            // Auto-calculate Lal Kitab Age (Running Year) based on Current Chart Time
             if (natalDateStr && natalTimeStr) {
                 let natal = parseDateStr(natalDateStr, natalTimeStr);
-                let ageCompleted = calcDateObj.getFullYear() - natal.getFullYear();
-                let m = calcDateObj.getMonth() - natal.getMonth();
-                if (m < 0 || (m === 0 && calcDateObj.getDate() < natal.getDate())) {
+                let modeStr = document.getElementById('ctrl-mode').value;
+                let refDate = (modeStr === 'Natal') ? new Date() : calcDateObj;
+                
+                let ageCompleted = refDate.getFullYear() - natal.getFullYear();
+                let m = refDate.getMonth() - natal.getMonth();
+                if (m < 0 || (m === 0 && refDate.getDate() < natal.getDate())) {
                     ageCompleted--;
                 }
                 let runningAge = ageCompleted >= 0 ? ageCompleted + 1 : 1;
@@ -599,14 +683,47 @@ HTML_PAGE = """
         function switchTab(id, el) {
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(b => {
-                b.classList.remove('active', 'border-blue-500', 'text-blue-600', 'text-green-700');
+                b.classList.remove('active', 'border-blue-500', 'text-blue-600', 'text-green-700', 'text-purple-700');
                 b.classList.add('border-transparent');
             });
             document.getElementById(id).classList.remove('hidden');
             el.classList.add('active', 'border-blue-500');
             if(id === 'tab-vastu') el.classList.add('text-green-700');
+            else if(id === 'tab-dasha') el.classList.add('text-purple-700');
             else el.classList.add('text-blue-600');
             el.classList.remove('border-transparent');
+        }
+
+        function toggleDasha(targetClass) {
+            const rows = document.querySelectorAll('.' + targetClass);
+            const icon = document.getElementById('icon-' + targetClass);
+            let isHidden = true;
+
+            rows.forEach(row => {
+                if (row.classList.contains('hidden')) {
+                    row.classList.remove('hidden');
+                    isHidden = false;
+                } else {
+                    row.classList.add('hidden');
+                    if (targetClass.startsWith('ad-')) {
+                        const idxs = targetClass.split('-').slice(1);
+                        document.querySelectorAll(`[class^="pd-${idxs[0]}-"]`).forEach(el => el.classList.add('hidden'));
+                        document.querySelectorAll(`[class^="sd-${idxs[0]}-"]`).forEach(el => el.classList.add('hidden'));
+                        document.querySelectorAll(`[class^="prd-${idxs[0]}-"]`).forEach(el => el.classList.add('hidden'));
+                        document.querySelectorAll(`[id^="icon-pd-${idxs[0]}-"]`).forEach(ic => ic.innerText = '+');
+                        document.querySelectorAll(`[id^="icon-sd-${idxs[0]}-"]`).forEach(ic => ic.innerText = '+');
+                    } else if (targetClass.startsWith('pd-')) {
+                        const idxs = targetClass.split('-').slice(1);
+                        document.querySelectorAll(`[class^="sd-${idxs[0]}-${idxs[1]}-"]`).forEach(el => el.classList.add('hidden'));
+                        document.querySelectorAll(`[class^="prd-${idxs[0]}-${idxs[1]}-"]`).forEach(el => el.classList.add('hidden'));
+                        document.querySelectorAll(`[id^="icon-sd-${idxs[0]}-${idxs[1]}-"]`).forEach(ic => ic.innerText = '+');
+                    } else if (targetClass.startsWith('sd-')) {
+                        const idxs = targetClass.split('-').slice(1);
+                        document.querySelectorAll(`[class^="prd-${idxs[0]}-${idxs[1]}-${idxs[2]}-"]`).forEach(el => el.classList.add('hidden'));
+                    }
+                }
+            });
+            if (icon) icon.innerText = isHidden ? '-' : '+';
         }
 
         function openModal(id) {
@@ -755,6 +872,17 @@ HTML_PAGE = """
                         <td style="border: 1px solid #ccc; padding: 2px; ${color} font-weight:bold;">${val}</td>
                     </tr>`;
                 }).join('');
+                
+                let dashaHtmlRows = '';
+                d.dasha.forEach(md => {
+                    dashaHtmlRows += `<tr style="background-color: #e2e8f0;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; font-weight:bold;">${md.lord}</td><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold;">${md.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold;">${md.end}</td></tr>`;
+                    md.subs.forEach(ad => {
+                        dashaHtmlRows += `<tr style="background-color: #f8fafc;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 10px; font-weight:bold;">↳ ${ad.lord}</td><td style="border: 1px solid #ccc; padding: 2px;">${ad.start}</td><td style="border: 1px solid #ccc; padding: 2px;">${ad.end}</td></tr>`;
+                        ad.subs.forEach(pd => {
+                            dashaHtmlRows += `<tr style="background-color: #ffffff;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 20px; font-size: 8px; color: #555;">• ${pd.lord}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${pd.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${pd.end}</td></tr>`;
+                        });
+                    });
+                });
 
                 let html = `
                 <!DOCTYPE html>
@@ -771,7 +899,7 @@ HTML_PAGE = """
                         .grid-charts { display: flex; justify-content: space-between; margin-bottom: 15px; }
                         .chart-box { border: 1px solid #0d2538; width: 32%; text-align: center; padding: 2px; page-break-inside: avoid; border-radius: 4px; }
                         .chart-box h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; }
-                        .chart-box svg { width: 100%; height: auto; max-width: 250px; }
+                        .chart-box svg { width: 100%; height: auto; max-width: 250px; margin: auto; display: block; }
                         .section { margin-bottom: 15px; page-break-inside: avoid; border: 1px solid #0d2538; border-radius: 4px; }
                         .section h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; text-align: center;}
                         table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 2px; }
@@ -813,21 +941,30 @@ HTML_PAGE = """
                     <div class="section">
                         <h2>Nadi Significators</h2>
                         <table>
-                            <tr><th>PLANET</th><th>P-SIGNIFS</th><th>STAR LORD</th><th>ST-SIGNIFS</th><th>SUB LORD</th><th>SB-SIGNIFS</th><th>STAR L OF</th><th>SUB L OF</th></tr>
-                            ${d.nadi.map(r => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td><b style="color:#0d2538;">${r[2]}</b></td><td>${r[3]}</td><td><b style="color:#0d2538;">${r[4]}</b></td><td>${r[5]}</td><td><b>${r[6]}</b></td><td><b>${r[7]}</b></td></tr>`).join('')}
+                            <tr><th>PLANET</th><th>P-SIGNIFS</th><th>STAR LORD</th><th>ST-SIGNIFS</th><th>SUB LORD</th><th>SB-SIGNIFS</th></tr>
+                            ${d.nadi.map(r => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td><b style="color:#0d2538;">${r[2]}</b></td><td>${r[3]}</td><td><b style="color:#0d2538;">${r[4]}</b></td><td>${r[5]}</td></tr>`).join('')}
+                        </table>
+                    </div>
+                    
+                    <div class="section">
+                        <h2>Vimshottari Dasha (3 Levels)</h2>
+                        <div style="padding: 3px; font-weight:bold; color: #c0392b;">${d.dasha_bal}</div>
+                        <table>
+                            <tr><th>Dasha Lord</th><th>Start Date</th><th>End Date</th></tr>
+                            ${dashaHtmlRows}
                         </table>
                     </div>
 
                     <div class="section" style="border-color: #1e8449;">
                         <h2 style="background-color: #1e8449;">Astro Vastu</h2>
-                        <div style="padding: 3px;">
-                            <h3 style="margin: 0 0 3px 0; font-size: 9px; color: #0d2538;">Planet to House Aspects</h3>
+                        <div style="padding: 5px;">
+                            <h3 style="margin: 0 0 5px 0; font-size: 10px; color: #0d2538;">Planet to House Aspects</h3>
                             <table style="table-layout: fixed; word-wrap: break-word;">
                                 <tr><th style="background-color: #eaecee; color:#0d2538;">Dir</th>${d.vastu_dirs.map(dir => `<th style="background-color: #82e0aa; color:black;">${dir}</th>`).join('')}</tr>
                                 ${vastuP2cRows}
                             </table>
                             
-                            <h3 style="margin: 8px 0 3px 0; font-size: 9px; color: #0d2538;">Planet to Planet Aspects</h3>
+                            <h3 style="margin: 10px 0 5px 0; font-size: 10px; color: #0d2538;">Planet to Planet Aspects</h3>
                             <table>
                                 <tr><th>FROM</th><th style="background-color:#eaecee; color:#000;">DIR 1</th><th>TO</th><th style="background-color:#eaecee; color:#000;">DIR 2</th><th>ASP</th></tr>
                                 ${vastuP2pRows}
@@ -917,8 +1054,6 @@ HTML_PAGE = """
                         <td class="border border-gray-200 p-3">${r[3]}</td>
                         <td class="border border-gray-200 p-3 font-bold text-blue-800">${r[4]}</td>
                         <td class="border border-gray-200 p-3">${r[5]}</td>
-                        <td class="border border-gray-200 p-3 font-bold text-blue-900">${r[6]}</td>
-                        <td class="border border-gray-200 p-3 font-bold text-blue-900">${r[7]}</td>
                     </tr>
                 `).join('');
                 
@@ -949,6 +1084,64 @@ HTML_PAGE = """
                     let val = r[4].replace('*','').replace('+','');
                     return `<tr class="${i%2==0?'bg-white':'bg-gray-50'} border-b border-gray-200 text-gray-800 hover:bg-gray-100"><td class="border border-gray-200 p-2 font-bold">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2 font-bold">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="${color} border border-gray-200 p-2 font-bold">${val}</td></tr>`;
                 }).join('');
+
+                // Dasha Tree Generation (5 Levels)
+                document.getElementById('dasha-bal').innerText = d.dasha_bal;
+                let dashaHtml = '';
+                d.dasha.forEach((md, i) => {
+                    let mdBg = md.active ? 'bg-green-200' : 'bg-blue-50 hover:bg-blue-100';
+                    let mdIcon = md.active ? '-' : '+';
+                    dashaHtml += `
+                        <tr class="${mdBg} border-b border-gray-300 cursor-pointer" onclick="toggleDasha('ad-${i}')">
+                            <td class="p-2 text-left font-bold text-blue-900 border border-gray-300"><span id="icon-ad-${i}" class="mr-2 border border-blue-900 px-1 text-xs">${mdIcon}</span>${md.lord}</td>
+                            <td class="p-2 font-bold border border-gray-300">${md.start}</td>
+                            <td class="p-2 font-bold border border-gray-300">${md.end}</td>
+                        </tr>`;
+                    md.subs.forEach((ad, j) => {
+                        let adBg = ad.active ? 'bg-green-100' : 'bg-white hover:bg-gray-50';
+                        let adHidden = md.active ? '' : 'hidden';
+                        let adIcon = ad.active ? '-' : '+';
+                        dashaHtml += `
+                            <tr class="ad-${i} ${adHidden} ${adBg} border-b border-gray-200 cursor-pointer" onclick="toggleDasha('pd-${i}-${j}')">
+                                <td class="p-2 text-left pl-8 font-semibold text-gray-800 border border-gray-200"><span id="icon-pd-${i}-${j}" class="mr-2 border border-gray-500 px-1 text-xs">${adIcon}</span>${ad.lord}</td>
+                                <td class="p-2 border border-gray-200">${ad.start}</td>
+                                <td class="p-2 border border-gray-200">${ad.end}</td>
+                            </tr>`;
+                        ad.subs.forEach((pd, k) => {
+                            let pdBg = pd.active ? 'bg-green-200 font-bold text-black' : 'bg-gray-50 hover:bg-gray-100 text-gray-600';
+                            let pdHidden = ad.active ? '' : 'hidden';
+                            let pdIcon = pd.active ? '-' : '+';
+                            dashaHtml += `
+                                <tr class="pd-${i}-${j} ${pdHidden} ${pdBg} border-b border-gray-100 text-xs cursor-pointer" onclick="toggleDasha('sd-${i}-${j}-${k}')">
+                                    <td class="p-2 text-left pl-12 border border-gray-100"><span id="icon-sd-${i}-${j}-${k}" class="mr-2 border border-gray-400 px-1 text-xs">${pdIcon}</span>${pd.lord}</td>
+                                    <td class="p-2 border border-gray-100">${pd.start}</td>
+                                    <td class="p-2 border border-gray-100">${pd.end}</td>
+                                </tr>`;
+                            pd.subs.forEach((sd, l) => {
+                                let sdBg = sd.active ? 'bg-green-100 font-bold text-black' : 'bg-white hover:bg-gray-50 text-gray-500';
+                                let sdHidden = pd.active ? '' : 'hidden';
+                                let sdIcon = sd.active ? '-' : '+';
+                                dashaHtml += `
+                                    <tr class="sd-${i}-${j}-${k} ${sdHidden} ${sdBg} border-b border-gray-100 text-[11px] cursor-pointer" onclick="toggleDasha('prd-${i}-${j}-${k}-${l}')">
+                                        <td class="p-2 text-left pl-16 border border-gray-100"><span id="icon-prd-${i}-${j}-${k}-${l}" class="mr-2 border border-gray-300 px-1 text-[10px]">${sdIcon}</span>${sd.lord}</td>
+                                        <td class="p-2 border border-gray-100">${sd.start}</td>
+                                        <td class="p-2 border border-gray-100">${sd.end}</td>
+                                    </tr>`;
+                                sd.subs.forEach((prd, m) => {
+                                    let prdBg = prd.active ? 'bg-green-200 font-bold text-black' : 'bg-gray-50 hover:bg-gray-100 text-gray-400';
+                                    let prdHidden = sd.active ? '' : 'hidden';
+                                    dashaHtml += `
+                                        <tr class="prd-${i}-${j}-${k}-${l} ${prdHidden} ${prdBg} border-b border-gray-50 text-[10px]">
+                                            <td class="p-2 text-left pl-20 border border-gray-50">↳ ${prd.lord}</td>
+                                            <td class="p-2 border border-gray-50">${prd.start}</td>
+                                            <td class="p-2 border border-gray-50">${prd.end}</td>
+                                        </tr>`;
+                                });
+                            });
+                        });
+                    });
+                });
+                document.getElementById('tb-dasha').innerHTML = dashaHtml;
 
                 document.getElementById('loader').classList.add('hidden');
                 document.getElementById('content-wrap').classList.remove('hidden');
@@ -1163,6 +1356,9 @@ def calculate_api():
 
         cusps_raw, _ = swe.houses_ex(calc_jd, lat, lon, b'P', flags=flags)
         mode = data.get('mode', 'Natal')
+        
+        current_eval_dt = datetime.now(tz).replace(tzinfo=None) if mode == "Natal" else calc_dt
+        
         try:
             if mode == "Horary" and 1 <= int(data.get('horary', 1)) <= 249:
                 diff = get_horary_ascendant(data['horary']) - cusps_raw[0]
@@ -1232,13 +1428,6 @@ def calculate_api():
             owns = [i+1 for i in range(12) if SIGN_LORDS[chalit_signs[i]-1] == p] if p not in ["Rahu", "Ketu"] else []
             base_sigs[p] = {'occ': occ, 'owns': owns}
 
-        star_lord_of = {p: [] for p in nadi_order}
-        sub_lord_of = {p: [] for p in nadi_order}
-        for row in cusp_res:
-            h_num = str(row[0])
-            if row[4] in star_lord_of: star_lord_of[row[4]].append(h_num)
-            if row[5] in sub_lord_of: sub_lord_of[row[5]].append(h_num)
-
         for p in nadi_order:
             sig = sorted(list(set([base_sigs[p]['occ']] + base_sigs[p]['owns'])))
             st = p_data[p]['st']
@@ -1246,21 +1435,15 @@ def calculate_api():
             sb = p_data[p]['sb']
             sb_sig = sorted(list(set([base_sigs[sb]['occ']] + base_sigs[sb]['owns'])))
             
-            st_of_str = ", ".join(star_lord_of[p]) or "-"
-            sb_of_str = ", ".join(sub_lord_of[p]) or "-"
-            
             nadi_res.append([
                 p, 
                 ", ".join(map(str, sig)) or "-", 
                 st, 
                 ", ".join(map(str, st_sig)) or "-", 
                 sb, 
-                ", ".join(map(str, sb_sig)) or "-",
-                st_of_str,
-                sb_of_str
+                ", ".join(map(str, sb_sig)) or "-"
             ])
 
-        # VASTU Calculations
         vastu_dirs = [SIGN_PROPS[s]["dir"] for s in range(1, 13)]
         vastu_p2c = []
         for r_title in ["Zodiac", "Lord", "Tatwa", "Mobility", "Sign No", "House"]:
@@ -1321,7 +1504,6 @@ def calculate_api():
                     if abs(diff - asp_deg) <= 3.0: hits_p2h.append([p_name, f"H {h_idx+1}", asp_name, f"{diff:.2f}°", nature])
 
         age = int(data.get('age', 51))
-        
         try: from_dt = natal_dt.replace(year=natal_dt.year + age - 1)
         except ValueError: from_dt = natal_dt + timedelta(days=365.25 * (age - 1))
         try: to_dt = natal_dt.replace(year=natal_dt.year + age)
@@ -1334,11 +1516,16 @@ def calculate_api():
             lon = (p_data["Rahu"]['lon'] + 180)%360 if p == "Ketu" else swe.calc_ut(natal_jd, PLANETS[p], flags)[0][0]
             varshphal[LK_MATRIX[age - 1][(int(lon/30) + 1 - true_asc_sign + 12) % 12]].append(p[:2])
 
+        # Dasha (Always Natal Moon)
+        natal_moon_lon = swe.calc_ut(natal_jd, swe.MOON, flags)[0][0]
+        dasha_list, dasha_bal = calculate_dasha(natal_moon_lon, natal_dt, current_eval_dt)
+
         return jsonify({
             "status": "success",
             "planets": planet_res, "cusps": cusp_res, "nadi": nadi_res,
             "hits_p2p": hits_p2p, "hits_p2h": hits_p2h,
             "vastu_dirs": vastu_dirs, "vastu_p2c": vastu_p2c, "vastu_p2p": vastu_p2p,
+            "dasha": dasha_list, "dasha_bal": dasha_bal,
             "svg_lagna": draw_svg_square(h_lagna, lagna_signs, "Lagna"),
             "svg_chalit": draw_svg_square(h_chalit, chalit_signs, "Chalit"),
             "svg_lk": draw_svg_lk(varshphal),
