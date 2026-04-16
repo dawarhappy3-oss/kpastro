@@ -20,7 +20,23 @@ LORDS = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "M
 YRS = [7, 20, 6, 10, 7, 18, 16, 19, 17]
 ZODIAC = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
 SIGN_LORDS = ["Mars", "Venus", "Mercury", "Moon", "Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Saturn", "Jupiter"]
+NAKSHATRAS = ["Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra", "Punarvasu", "Pushya", "Ashlesha", "Magha", "Purva Phalguni", "Uttara Phalguni", "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha", "Mula", "Purva Ashadha", "Uttara Ashadha", "Shravana", "Dhanishta", "Shatabhisha", "Purva Bhadrapada", "Uttara Bhadrapada", "Revati"]
 DEGREE_ASPECTS = {0: ("Conjunction", "Variable"), 30: ("Semi-Sextile", "Positive"), 45: ("Semi-Square", "Negative"), 60: ("Sextile", "Positive"), 90: ("Square", "Negative"), 120: ("Trine", "Positive"), 135: ("Sesquisquare", "Negative"), 180: ("Opposition", "Negative")}
+
+SIGN_PROPS = { 
+    1: {"dir": "E/ESE6", "tatwa": "Fire", "mob": "Movable", "gender": "M"},
+    2: {"dir": "WNW/NW", "tatwa": "Earth", "mob": "Fixed", "gender": "F"},
+    3: {"dir": "NNW", "tatwa": "Air", "mob": "Dual", "gender": "M"},
+    4: {"dir": "NNE", "tatwa": "Water", "mob": "Movable", "gender": "F"},
+    5: {"dir": "ENE", "tatwa": "Fire", "mob": "Fixed", "gender": "M"},
+    6: {"dir": "N", "tatwa": "Earth", "mob": "Dual", "gender": "F"},
+    7: {"dir": "WSW", "tatwa": "Air", "mob": "Movable", "gender": "M"},
+    8: {"dir": "SSW", "tatwa": "Water", "mob": "Fixed", "gender": "F"},
+    9: {"dir": "NE", "tatwa": "Fire", "mob": "Dual", "gender": "M"},
+    10: {"dir": "SSE/S", "tatwa": "Earth", "mob": "Movable", "gender": "F"},
+    11: {"dir": "W", "tatwa": "Air", "mob": "Fixed", "gender": "M"},
+    12: {"dir": "ESE7/SE", "tatwa": "Water", "mob": "Dual", "gender": "F"}
+}
 
 LK_MATRIX = [
     [ 1,  9, 10,  3,  5,  2, 11,  7,  6, 12,  4,  8], [ 4,  1, 12,  9,  3,  7,  5,  6,  2,  8, 10, 11],
@@ -171,6 +187,7 @@ def draw_svg_lk(house_data):
 
     for i in range(1, 13):
         px, py = pos[i]; ox, oy = offsets[i]
+        # Draw fixed Kal Purush numbers as requested in Ledger
         svg += f'<text x="{px + ox}" y="{py + oy + 4}" text-anchor="middle" font-size="11" font-family="Arial" fill="#c0392b">{i}</text>\n'
         planets = house_data.get(i, [])
         if planets:
@@ -195,158 +212,320 @@ HTML_PAGE = """
         .tab-btn.active { border-color: #3b82f6; color: #2563eb; font-weight: bold; }
         th, td { border: 1px solid #e5e7eb; padding: 0.5rem; text-align: center; }
         th { background-color: #1e3a8a; color: white; }
+        .modal { background-color: rgba(0,0,0,0.5); }
+        
+        /* EXACT PRINT STYLING */
+        @media print {
+            .print-hide { display: none !important; }
+            body { background-color: #ffffff !important; color: #000000 !important; padding: 0 !important; margin: 0 !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            #dashboard-screen { padding: 0 !important; max-width: 100% !important; margin: 0 !important; box-shadow: none !important; }
+            .bg-\\[\\#1e3a8a\\] { background-color: #1e3a8a !important; color: #ffffff !important; }
+            .border-b, .border-gray-200 { border-color: #cccccc !important; }
+        }
     </style>
 </head>
-<body class="bg-gray-100 text-gray-800 font-sans">
+<body class="bg-gray-100 text-gray-800 font-sans relative">
 
     <div id="input-screen" class="min-h-screen flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-xl p-8 max-w-3xl w-full">
-            <h1 class="text-3xl font-extrabold text-center text-blue-900 mb-8">KP Astrology Pro Setup</h1>
+        <div class="bg-white rounded-xl shadow-xl p-8 max-w-3xl w-full border border-gray-200">
+            <h1 class="text-3xl font-extrabold text-center text-blue-900 mb-8 tracking-wide drop-shadow-sm">KP Astrology Pro Setup</h1>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <div><label class="block text-sm font-bold text-gray-700">Name</label><input type="text" id="i-name" value="Happy" class="mt-1 w-full border rounded p-2"></div>
-                <div><label class="block text-sm font-bold text-gray-700">DOB (DD-MM-YYYY)</label><input type="text" id="i-dob" value="01-09-1975" class="mt-1 w-full border rounded p-2"></div>
-                <div><label class="block text-sm font-bold text-gray-700">Time (HH:MM:SS)</label><input type="text" id="i-time" value="05:16:00" class="mt-1 w-full border rounded p-2"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">Name</label><input type="text" id="i-name" value="Happy" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">DOB (DD-MM-YYYY)</label><input type="text" id="i-dob" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">Time (HH:MM:SS)</label><input type="text" id="i-time" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
                 
                 <div>
-                    <label class="block text-sm font-bold text-gray-700">City</label>
+                    <label class="block text-sm font-bold text-blue-900 mb-1">City</label>
                     <div class="relative">
-                        <input type="text" id="i-city" value="Ludhiana" onblur="fetchLocation()" class="mt-1 w-full border rounded p-2">
+                        <input type="text" id="i-city" value="Ludhiana" onblur="fetchLocation()" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <span id="city-status" class="absolute right-2 top-3 text-xs font-bold text-blue-600"></span>
                     </div>
                 </div>
 
-                <div><label class="block text-sm font-bold text-gray-700">Latitude</label><input type="text" id="i-lat" value="30.9010" class="mt-1 w-full border rounded p-2"></div>
-                <div><label class="block text-sm font-bold text-gray-700">Longitude</label><input type="text" id="i-lon" value="75.8573" class="mt-1 w-full border rounded p-2"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">Latitude</label><input type="text" id="i-lat" value="30.9010" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">Longitude</label><input type="text" id="i-lon" value="75.8573" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 <div>
-                    <label class="block text-sm font-bold text-gray-700">Timezone</label>
-                    <input type="text" id="i-tz" value="Asia/Kolkata" class="mt-1 w-full border rounded p-2">
+                    <label class="block text-sm font-bold text-blue-900 mb-1">Timezone</label>
+                    <input type="text" id="i-tz" value="Asia/Kolkata" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                <div><label class="block text-sm font-bold text-gray-700">Horary (1-249)</label><input type="number" id="i-horary" value="1" class="mt-1 w-full border rounded p-2"></div>
+                <div><label class="block text-sm font-bold text-blue-900 mb-1">Horary (1-249)</label><input type="number" id="i-horary" value="1" class="w-full border border-gray-200 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700">Ayanamsa</label>
-                    <select id="i-aya" class="mt-1 w-full border rounded p-2">
+                    <label class="block text-sm font-bold text-blue-900 mb-1">Ayanamsa</label>
+                    <select id="i-aya" class="w-full border border-gray-200 rounded p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="Chitrapaksha" selected>Lahiri</option>
                         <option value="K.P.">K.P.</option>
-                        <option value="Chitrapaksha">Lahiri</option>
                         <option value="Raman">Raman</option>
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700">Rahu</label>
-                    <select id="i-rahu" class="mt-1 w-full border rounded p-2">
+                    <label class="block text-sm font-bold text-blue-900 mb-1">Rahu</label>
+                    <select id="i-rahu" class="w-full border border-gray-200 rounded p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <option value="Mean">Mean Node</option>
                         <option value="True">True Node</option>
                     </select>
                 </div>
             </div>
 
-            <button onclick="openDashboard()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded text-lg shadow">
+            <button onclick="openDashboard()" class="w-full bg-[#16a34a] hover:bg-[#15803d] text-white font-bold py-3 px-4 rounded text-lg shadow drop-shadow-md tracking-wider">
                 OPEN DASHBOARD
             </button>
         </div>
     </div>
 
     <div id="dashboard-screen" class="hidden p-4 max-w-7xl mx-auto">
-        <div class="flex flex-col md:flex-row justify-between items-center mb-6 bg-blue-900 text-white p-4 rounded shadow gap-4">
+        <div class="flex flex-col md:flex-row justify-between items-center mb-4 bg-[#1e3a8a] text-white p-4 rounded shadow gap-4">
             <div>
-                <h2 class="text-2xl font-bold" id="d-name">Client Name</h2>
-                <p class="text-sm text-gray-300" id="d-details">DOB | Time | Place</p>
+                <h2 class="text-2xl font-bold tracking-wide" id="d-name">Client Name</h2>
+                <p class="text-sm text-blue-200 font-semibold mt-1" id="d-details">DOB | Time | Place</p>
             </div>
-            <div class="flex items-center gap-4">
-                <div class="flex flex-col">
-                    <label class="text-xs font-bold text-gray-300">Chart Mode</label>
-                    <select id="d-mode" class="text-black p-1 rounded font-bold" onchange="fetchData()">
-                        <option value="Natal">Natal</option>
-                        <option value="Horary">Horary</option>
-                    </select>
+            <div class="flex items-center gap-3 flex-wrap justify-end print-hide">
+                <button onclick="generateMasterReport()" class="bg-blue-500 hover:bg-blue-600 px-3 py-1 rounded font-bold text-sm shadow text-white">Print Report 📄</button>
+                <button onclick="openModal('forward-modal')" class="bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded font-bold text-sm shadow">Forward Check 🔎</button>
+                <button onclick="openModal('ssub-modal')" class="bg-teal-500 hover:bg-teal-600 px-3 py-1 rounded font-bold text-sm shadow">S-Sub Tracker ⏱️</button>
+                <button onclick="openModal('retro-modal')" class="bg-purple-500 hover:bg-purple-600 px-3 py-1 rounded font-bold text-sm shadow">Retro Report 🔄</button>
+                <div class="flex flex-col border-l border-blue-400 pl-3 ml-1">
+                    <label class="text-xs font-bold text-blue-200">Lal Kitab Age</label>
+                    <input type="number" id="d-age" value="51" class="text-black w-16 p-1 rounded font-bold focus:outline-none" onchange="fetchData()">
                 </div>
-                <div class="flex flex-col">
-                    <label class="text-xs font-bold text-gray-300">Lal Kitab Age</label>
-                    <input type="number" id="d-age" value="51" class="text-black w-16 p-1 rounded font-bold" onchange="fetchData()">
-                </div>
-                <button onclick="backToInput()" class="bg-red-500 hover:bg-red-600 px-4 py-2 rounded font-bold mt-4">Close</button>
+                <button onclick="backToInput()" class="bg-red-500 hover:bg-red-600 px-4 py-2 rounded font-bold mt-4 md:mt-0 shadow ml-2">Close</button>
             </div>
         </div>
 
-        <div id="loader" class="hidden text-center text-blue-600 font-bold text-xl my-8">Calculating Ephemeris Data... Please wait.</div>
+        <div class="bg-white p-4 rounded shadow mb-6 flex flex-wrap gap-4 items-center justify-between border border-gray-200 print-hide">
+            <div class="flex items-center gap-2">
+                <label class="font-bold text-sm text-blue-900">Mode:</label>
+                <select id="ctrl-mode" class="border border-gray-300 p-1 rounded bg-gray-50 focus:outline-none" onchange="modeChanged()">
+                    <option value="Natal">Natal</option>
+                    <option value="Transit">Transit</option>
+                    <option value="Horary">Horary</option>
+                </select>
+            </div>
+            
+            <div class="flex items-center gap-2">
+                <label class="font-bold text-sm text-blue-900">Revolve House:</label>
+                <select id="ctrl-rot" class="border border-gray-300 p-1 rounded bg-gray-50 focus:outline-none" onchange="fetchData()">
+                    <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                    <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+                    <option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option>
+                </select>
+            </div>
+
+            <div class="flex items-center gap-2 text-sm font-bold">
+                <div class="flex items-center bg-gray-100 rounded px-2 py-1 shadow-sm"><button onclick="adjTime(-1, 'y')" class="text-red-500 px-1 hover:text-red-700">-</button>Year<button onclick="adjTime(1, 'y')" class="text-green-500 px-1 hover:text-green-700">+</button></div>
+                <div class="flex items-center bg-gray-100 rounded px-2 py-1 shadow-sm"><button onclick="adjTime(-1, 'm')" class="text-red-500 px-1 hover:text-red-700">-</button>Month<button onclick="adjTime(1, 'm')" class="text-green-500 px-1 hover:text-green-700">+</button></div>
+                <div class="flex items-center bg-gray-100 rounded px-2 py-1 shadow-sm"><button onclick="adjTime(-1, 'd')" class="text-red-500 px-1 hover:text-red-700">-</button>Day<button onclick="adjTime(1, 'd')" class="text-green-500 px-1 hover:text-green-700">+</button></div>
+                <div class="flex items-center bg-gray-100 rounded px-2 py-1 shadow-sm"><button onclick="adjTime(-1, 'h')" class="text-red-500 px-1 hover:text-red-700">-</button>Hour<button onclick="adjTime(1, 'h')" class="text-green-500 px-1 hover:text-green-700">+</button></div>
+                <div class="flex items-center bg-gray-100 rounded px-2 py-1 shadow-sm"><button onclick="adjTime(-1, 'min')" class="text-red-500 px-1 hover:text-red-700">-</button>Min<button onclick="adjTime(1, 'min')" class="text-green-500 px-1 hover:text-green-700">+</button></div>
+            </div>
+
+            <div class="font-bold text-red-600 bg-red-50 border border-red-100 px-3 py-1 rounded" id="current-chart-time">--</div>
+        </div>
+
+        <div id="loader" class="hidden text-center text-blue-600 font-bold text-xl my-8 print-hide">Calculating Ephemeris Data... Please wait.</div>
 
         <div id="content-wrap" class="hidden">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-blue-900 mb-2">Lagna Chart</h3><div id="svg-lagna"></div></div>
-                <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-green-900 mb-2">Bhava Chalit</h3><div id="svg-chalit"></div></div>
-                <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-red-900 mb-2">Lal Kitab Varshphal</h3><div id="svg-lk"></div></div>
+                <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-blue-900 mb-2 tracking-wide" id="title-lagna">Lagna Chart</h3><div id="svg-lagna"></div></div>
+                <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-green-900 mb-2 tracking-wide" id="title-chalit">Bhava Chalit</h3><div id="svg-chalit"></div></div>
+                <div class="bg-white rounded shadow p-4"><h3 class="font-bold text-center text-red-900 mb-2 tracking-wide" id="title-lk">Lal Kitab Varshphal</h3><div id="svg-lk"></div></div>
             </div>
 
-            <div class="border-b mb-6 flex space-x-4 overflow-x-auto">
+            <div class="border-b border-gray-300 mb-6 flex space-x-4 overflow-x-auto print-hide">
                 <button onclick="switchTab('tab-pos', this)" class="tab-btn active px-4 py-2 border-b-2 border-blue-500 text-blue-600 font-bold whitespace-nowrap">Positions</button>
                 <button onclick="switchTab('tab-nadi', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap">Nadi</button>
                 <button onclick="switchTab('tab-hits', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap">Degree Hits</button>
+                <button onclick="switchTab('tab-vastu', this)" class="tab-btn px-4 py-2 border-b-2 border-transparent font-bold whitespace-nowrap text-green-700">Astro Vastu</button>
             </div>
 
-            <div id="tab-pos" class="tab-pane grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div class="bg-white shadow rounded p-4 overflow-auto">
-                    <h3 class="font-bold text-blue-900 mb-2">Planetary Positions</h3>
-                    <table class="w-full text-xs">
-                        <thead><tr><th>Planet</th><th>Sign</th><th>Degree</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr></thead>
+            <div id="tab-pos" class="tab-pane grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-blue-900 p-3 bg-gray-50 border-b">Planetary Positions</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead class="bg-[#1e3a8a] text-white"><tr><th class="p-2 border border-blue-800">Planet</th><th class="p-2 border border-blue-800">Sign</th><th class="p-2 border border-blue-800">Degree</th><th class="p-2 border border-blue-800">Nakshatra</th><th class="p-2 border border-blue-800">Star L</th><th class="p-2 border border-blue-800">Sub L</th><th class="p-2 border border-blue-800">S-Sub</th></tr></thead>
                         <tbody id="tb-planets"></tbody>
                     </table>
                 </div>
-                <div class="bg-white shadow rounded p-4 overflow-auto">
-                    <h3 class="font-bold text-green-900 mb-2">Cusp Positions</h3>
-                    <table class="w-full text-xs">
-                        <thead><tr><th>House</th><th>Sign</th><th>Degree</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr></thead>
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-green-900 p-3 bg-gray-50 border-b">Cusp Positions</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead class="bg-[#1e3a8a] text-white"><tr><th class="p-2 border border-blue-800">House</th><th class="p-2 border border-blue-800">Sign</th><th class="p-2 border border-blue-800">Degree</th><th class="p-2 border border-blue-800">Nakshatra</th><th class="p-2 border border-blue-800">Star L</th><th class="p-2 border border-blue-800">Sub L</th><th class="p-2 border border-blue-800">S-Sub</th></tr></thead>
                         <tbody id="tb-cusps"></tbody>
                     </table>
                 </div>
             </div>
 
-            <div id="tab-nadi" class="tab-pane hidden bg-white shadow rounded p-4 overflow-auto">
-                <table class="w-full text-sm">
-                    <thead><tr><th>PLANET</th><th>P-SIGNIFS</th><th>STAR LORD</th><th>ST-SIGNIFS</th><th>SUB LORD</th><th>SB-SIGNIFS</th></tr></thead>
+            <div id="tab-nadi" class="tab-pane hidden bg-white shadow rounded overflow-x-auto border border-gray-200">
+                <table class="w-full text-sm text-center border-collapse">
+                    <thead class="bg-[#1e3a8a] text-white">
+                        <tr>
+                            <th class="p-3 border border-blue-800">PLANET</th>
+                            <th class="p-3 border border-blue-800">P-SIGNIFS</th>
+                            <th class="p-3 border border-blue-800">STAR LORD</th>
+                            <th class="p-3 border border-blue-800">ST-SIGNIFS</th>
+                            <th class="p-3 border border-blue-800">SUB LORD</th>
+                            <th class="p-3 border border-blue-800">SB-SIGNIFS</th>
+                            <th class="p-3 border border-blue-800">STAR LORD OF</th>
+                            <th class="p-3 border border-blue-800">SUB LORD OF</th>
+                        </tr>
+                    </thead>
                     <tbody id="tb-nadi"></tbody>
                 </table>
             </div>
 
             <div id="tab-hits" class="tab-pane hidden grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div class="bg-white shadow rounded p-4 overflow-auto">
-                    <h3 class="font-bold mb-2">Planet to Planet</h3>
-                    <table class="w-full text-xs">
-                        <thead><tr><th>P1</th><th>P2</th><th>Aspect</th><th>Diff</th><th>Nature</th></tr></thead>
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-gray-800 p-3 bg-gray-50 border-b">Planet to Planet</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead class="bg-[#1e3a8a] text-white"><tr><th class="p-2 border border-blue-800">P1</th><th class="p-2 border border-blue-800">P2</th><th class="p-2 border border-blue-800">Aspect</th><th class="p-2 border border-blue-800">Diff</th><th class="p-2 border border-blue-800">Nature</th></tr></thead>
                         <tbody id="tb-p2p"></tbody>
                     </table>
                 </div>
-                <div class="bg-white shadow rounded p-4 overflow-auto">
-                    <h3 class="font-bold mb-2">Planet to House</h3>
-                    <table class="w-full text-xs">
-                        <thead><tr><th>Planet</th><th>House</th><th>Aspect</th><th>Diff</th><th>Nature</th></tr></thead>
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-gray-800 p-3 bg-gray-50 border-b">Planet to House</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead class="bg-[#1e3a8a] text-white"><tr><th class="p-2 border border-blue-800">Planet</th><th class="p-2 border border-blue-800">House</th><th class="p-2 border border-blue-800">Aspect</th><th class="p-2 border border-blue-800">Diff</th><th class="p-2 border border-blue-800">Nature</th></tr></thead>
                         <tbody id="tb-p2h"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="tab-vastu" class="tab-pane hidden grid grid-cols-1 gap-6">
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-green-900 p-3 bg-gray-50 border-b">Planet to House (Directional Aspects)</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead id="th-vastu-p2c"></thead>
+                        <tbody id="tb-vastu-p2c"></tbody>
+                    </table>
+                </div>
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-blue-900 p-3 bg-gray-50 border-b">Planet to Planet (Directional Aspects)</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead class="bg-[#1e3a8a] text-white"><tr><th class="p-2 border border-blue-800">FROM</th><th class="p-2 border border-blue-800">DIR 1</th><th class="p-2 border border-blue-800">TO</th><th class="p-2 border border-blue-800">DIR 2</th><th class="p-2 border border-blue-800">ASP</th></tr></thead>
+                        <tbody id="tb-vastu-p2p"></tbody>
                     </table>
                 </div>
             </div>
         </div>
     </div>
 
+    <div id="ssub-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4 print-hide">
+        <div class="bg-gray-100 rounded-lg shadow-2xl p-6 max-w-5xl w-full border-4 border-teal-500 relative flex flex-col max-h-[90vh]">
+            <button onclick="closeModal('ssub-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
+            <h2 class="text-2xl font-bold text-teal-800 mb-4 tracking-wide">Planet Sub-Sub Lord Tracker Matrix</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 shrink-0">
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">From (DD-MM-YYYY HH:MM:SS)</label><input type="text" id="ss-start" class="w-full border p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"></div>
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">To (DD-MM-YYYY HH:MM:SS)</label><input type="text" id="ss-end" class="w-full border p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"></div>
+            </div>
+            <button onclick="runSSubTracker()" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 rounded mb-4 shadow transition-colors shrink-0">Generate Matrix (Max 3 Days)</button>
+            
+            <div id="ss-loader" class="hidden text-center text-teal-600 font-bold py-4 shrink-0">Calculating exact matrix minute-by-minute... This may take a few seconds.</div>
+            
+            <div class="overflow-y-auto border border-gray-300 rounded p-4 bg-white flex-1" id="ss-body">
+                </div>
+        </div>
+    </div>
+
+    <div id="forward-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4 print-hide">
+        <div class="bg-[#fcf5cd] rounded-md shadow-2xl p-6 max-w-2xl w-full relative border-2 border-yellow-200">
+            <button onclick="closeModal('forward-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
+            <h2 class="text-2xl font-bold text-[#b91c1c] mb-6 tracking-wide">Forward Checking of Planet</h2>
+            
+            <div class="grid grid-cols-2 gap-x-6 gap-y-4 mb-6">
+                <div>
+                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Start Date (DD-MM-YYYY)</label>
+                    <input type="text" id="fc-date" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Target Type</label>
+                    <select id="fc-type" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                        <option value="Sign">Sign (1-12)</option>
+                        <option value="Nakshatra">Nakshatra (1-27)</option>
+                        <option value="Degree">Exact Degree (0-360)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Planet</label>
+                    <select id="fc-planet" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                        <option>Sun</option><option>Moon</option><option>Mars</option><option>Mercury</option><option>Jupiter</option><option>Venus</option><option>Saturn</option><option>Rahu</option><option>Ketu</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Target Value</label>
+                    <input type="text" id="fc-val" value="1" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                </div>
+            </div>
+            
+            <button onclick="runForwardCheck()" class="w-full bg-[#cbd5e1] hover:bg-[#94a3b8] text-black font-bold py-3 rounded shadow transition-colors">Start Checking (Max 100 Yrs)</button>
+            
+            <p id="fc-res" class="mt-6 font-bold text-center text-lg text-[#1d4ed8]"></p>
+        </div>
+    </div>
+
+    <div id="retro-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4 print-hide">
+        <div class="bg-white rounded-lg shadow-2xl p-6 max-w-lg w-full border border-gray-300 relative">
+            <button onclick="closeModal('retro-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
+            <h2 class="text-2xl font-bold text-purple-800 mb-6 tracking-wide">Planet Retro/Direct Report</h2>
+            <div class="grid grid-cols-3 gap-3 mb-6">
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">From (DD-MM-YYYY)</label><input type="text" id="rr-start" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400"></div>
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">To (DD-MM-YYYY)</label><input type="text" id="rr-end" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400"></div>
+                <div>
+                    <label class="text-xs font-bold text-gray-700 mb-1 block">Planet</label>
+                    <select id="rr-planet" class="w-full border p-2 rounded bg-gray-50 focus:outline-none focus:ring-1 focus:ring-purple-400">
+                        <option>Mercury</option><option>Venus</option><option>Mars</option><option>Jupiter</option><option>Saturn</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="runRetroReport()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded mb-4 shadow transition-colors">Generate Report</button>
+            <div class="h-64 overflow-y-auto border border-gray-200 rounded">
+                <table class="w-full text-sm text-center border-collapse">
+                    <thead class="bg-gray-100 text-gray-700 sticky top-0 shadow-sm"><tr><th class="p-2 border">Approx Date</th><th class="p-2 border">Movement Change</th></tr></thead>
+                    <tbody id="rr-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <script>
+        let calcDateObj = new Date();
+        let natalDateStr = "";
+        let natalTimeStr = "";
+
+        // Set App Initial Load to CURRENT Time
+        window.addEventListener('DOMContentLoaded', () => {
+            let now = new Date();
+            let pad = (n) => n.toString().padStart(2, '0');
+            document.getElementById('i-dob').value = `${pad(now.getDate())}-${pad(now.getMonth()+1)}-${now.getFullYear()}`;
+            document.getElementById('i-time').value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        });
+
+        function parseDateStr(dateStr, timeStr) {
+            let dmy = dateStr.split('-');
+            let hms = timeStr.split(':');
+            return new Date(dmy[2], dmy[1]-1, dmy[0], hms[0], hms[1], hms[2]);
+        }
+
+        function getFormattedCalc() {
+            let pad = (n) => n.toString().padStart(2, '0');
+            return {
+                d: `${pad(calcDateObj.getDate())}-${pad(calcDateObj.getMonth()+1)}-${calcDateObj.getFullYear()}`,
+                t: `${pad(calcDateObj.getHours())}:${pad(calcDateObj.getMinutes())}:${pad(calcDateObj.getSeconds())}`
+            };
+        }
+
         async function fetchLocation() {
             const city = document.getElementById('i-city').value;
             if(!city) return;
-            
             const statusLabel = document.getElementById('city-status');
             statusLabel.innerText = "Searching...";
-            statusLabel.classList.remove('text-red-600', 'text-green-600');
-            statusLabel.classList.add('text-blue-600');
-
+            statusLabel.className = "absolute right-2 top-3 text-xs font-bold text-blue-600";
             try {
-                const res = await fetch('/api/location', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({city: city})
-                });
+                const res = await fetch('/api/location', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({city: city}) });
                 const data = await res.json();
-                
                 if(data.status === 'success') {
                     document.getElementById('i-lat').value = data.lat;
                     document.getElementById('i-lon').value = data.lon;
@@ -354,22 +533,47 @@ HTML_PAGE = """
                     statusLabel.innerText = "Found!";
                     statusLabel.classList.replace('text-blue-600', 'text-green-600');
                 } else {
-                    statusLabel.innerText = "Not found. Enter manually.";
+                    statusLabel.innerText = "Not found.";
                     statusLabel.classList.replace('text-blue-600', 'text-red-600');
                 }
-            } catch(e) {
-                statusLabel.innerText = "API Error.";
-            }
+            } catch(e) { statusLabel.innerText = "API Error."; }
         }
 
         function openDashboard() {
             document.getElementById('input-screen').classList.add('hidden');
             document.getElementById('dashboard-screen').classList.remove('hidden');
-            
             document.getElementById('d-name').innerText = document.getElementById('i-name').value;
-            document.getElementById('d-details').innerText = `${document.getElementById('i-dob').value} | ${document.getElementById('i-time').value} | TZ: ${document.getElementById('i-tz').value}`;
+            natalDateStr = document.getElementById('i-dob').value;
+            natalTimeStr = document.getElementById('i-time').value;
+            document.getElementById('d-details').innerText = `${natalDateStr} | ${natalTimeStr} | TZ: ${document.getElementById('i-tz').value}`;
             
+            document.getElementById('ctrl-mode').value = "Natal";
+            calcDateObj = parseDateStr(natalDateStr, natalTimeStr);
+            updateTimeDisplay();
             fetchData();
+        }
+
+        function modeChanged() {
+            let mode = document.getElementById('ctrl-mode').value;
+            if (mode === 'Transit') calcDateObj = new Date();
+            else calcDateObj = parseDateStr(natalDateStr, natalTimeStr); 
+            updateTimeDisplay();
+            fetchData();
+        }
+
+        function adjTime(val, unit) {
+            if (unit === 'y') calcDateObj.setFullYear(calcDateObj.getFullYear() + val);
+            if (unit === 'm') calcDateObj.setMonth(calcDateObj.getMonth() + val);
+            if (unit === 'd') calcDateObj.setDate(calcDateObj.getDate() + val);
+            if (unit === 'h') calcDateObj.setHours(calcDateObj.getHours() + val);
+            if (unit === 'min') calcDateObj.setMinutes(calcDateObj.getMinutes() + val);
+            updateTimeDisplay();
+            fetchData();
+        }
+
+        function updateTimeDisplay() {
+            let obj = getFormattedCalc();
+            document.getElementById('current-chart-time').innerText = `Chart Time: ${obj.d} ${obj.t}`;
         }
 
         function backToInput() {
@@ -381,55 +585,358 @@ HTML_PAGE = """
         function switchTab(id, el) {
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(b => {
-                b.classList.remove('active', 'border-blue-500', 'text-blue-600');
+                b.classList.remove('active', 'border-blue-500', 'text-blue-600', 'text-green-700');
                 b.classList.add('border-transparent');
             });
             document.getElementById(id).classList.remove('hidden');
-            el.classList.add('active', 'border-blue-500', 'text-blue-600');
+            el.classList.add('active', 'border-blue-500');
+            if(id === 'tab-vastu') el.classList.add('text-green-700');
+            else el.classList.add('text-blue-600');
             el.classList.remove('border-transparent');
+        }
+
+        function openModal(id) {
+            let pad = (n) => n.toString().padStart(2, '0');
+            let today = new Date(); 
+            
+            if(id === 'forward-modal') {
+                document.getElementById('fc-date').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()}`;
+            }
+            if(id === 'retro-modal') {
+                document.getElementById('rr-start').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()}`;
+                let nextYr = new Date(today); nextYr.setFullYear(nextYr.getFullYear()+1);
+                document.getElementById('rr-end').value = `${pad(nextYr.getDate())}-${pad(nextYr.getMonth()+1)}-${nextYr.getFullYear()}`;
+            }
+            if(id === 'ssub-modal') {
+                document.getElementById('ss-start').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()} 00:00:00`;
+                document.getElementById('ss-end').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()} 23:59:59`;
+                document.getElementById('ss-body').innerHTML = '';
+            }
+            document.getElementById(id).classList.remove('hidden');
+        }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+        async function runForwardCheck() {
+            document.getElementById('fc-res').innerText = "Calculating...";
+            const payload = {
+                date: document.getElementById('fc-date').value || getFormattedCalc().d,
+                planet: document.getElementById('fc-planet').value,
+                t_type: document.getElementById('fc-type').value,
+                t_val: parseFloat(document.getElementById('fc-val').value),
+                tz: document.getElementById('i-tz').value,
+                aya: document.getElementById('i-aya').value
+            };
+            const res = await fetch('/api/forward_check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const d = await res.json();
+            if (d.status === 'success') document.getElementById('fc-res').innerText = d.result;
+            else document.getElementById('fc-res').innerText = "Error: " + d.message;
+        }
+
+        async function runRetroReport() {
+            document.getElementById('rr-body').innerHTML = "<tr><td colspan='2' class='p-4 text-gray-500 font-bold'>Calculating...</td></tr>";
+            const payload = {
+                start: document.getElementById('rr-start').value,
+                end: document.getElementById('rr-end').value,
+                planet: document.getElementById('rr-planet').value,
+                tz: document.getElementById('i-tz').value,
+                aya: document.getElementById('i-aya').value
+            };
+            const res = await fetch('/api/retro_report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const d = await res.json();
+            if (d.status === 'success') {
+                document.getElementById('rr-body').innerHTML = d.results.map(r => `<tr><td class="font-bold border border-gray-200 px-2 py-2 text-gray-800">${r.date}</td><td class="${r.status.includes('RETRO')?'text-red-600':'text-green-600'} font-bold border border-gray-200 px-2 py-2">${r.status}</td></tr>`).join('');
+            } else {
+                document.getElementById('rr-body').innerHTML = `<tr><td colspan='2' class="text-red-500 font-bold border px-2 py-2">Error: ${d.message}</td></tr>`;
+            }
+        }
+        
+        async function runSSubTracker() {
+            document.getElementById('ss-body').innerHTML = "";
+            document.getElementById('ss-loader').classList.remove('hidden');
+            
+            const payload = {
+                start: document.getElementById('ss-start').value,
+                end: document.getElementById('ss-end').value,
+                tz: document.getElementById('i-tz').value,
+                aya: document.getElementById('i-aya').value,
+                rahu: document.getElementById('i-rahu').value
+            };
+            
+            try {
+                const res = await fetch('/api/ssub_tracker', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const d = await res.json();
+                document.getElementById('ss-loader').classList.add('hidden');
+                
+                if (d.status === 'success') {
+                    let html = '';
+                    const planets = ["Moon", "Sun", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"];
+                    for (let p of planets) {
+                        let events = d.results[p];
+                        if (events && events.length > 0) {
+                            html += `<div class="flex flex-col md:flex-row items-start mb-4 border-b pb-4">`;
+                            html += `<div class="w-24 font-bold text-lg pt-1 text-gray-800 shrink-0">${p}</div>`;
+                            html += `<div class="flex flex-wrap gap-2 flex-1">`;
+                            for (let ev of events) {
+                                html += `<div class="bg-gray-50 border border-gray-300 rounded px-2 py-1 text-center min-w-[80px] shadow-sm">
+                                            <div class="text-xs text-blue-800 font-bold">${ev.val}</div>
+                                            <div class="text-[10px] text-gray-600 font-semibold">${ev.date}</div>
+                                            <div class="text-xs text-gray-800">${ev.time}</div>
+                                         </div>`;
+                            }
+                            html += `</div></div>`;
+                        }
+                    }
+                    if(html === '') html = '<div class="text-gray-500 font-bold text-center py-4">No changes found in this timeframe.</div>';
+                    document.getElementById('ss-body').innerHTML = html;
+                } else {
+                    document.getElementById('ss-body').innerHTML = `<div class="text-red-500 font-bold text-center py-4">Error: ${d.message}</div>`;
+                }
+            } catch(e) {
+                document.getElementById('ss-loader').classList.add('hidden');
+                document.getElementById('ss-body').innerHTML = `<div class="text-red-500 font-bold text-center py-4">Network or API Error</div>`;
+            }
+        }
+
+        function generateMasterReport() {
+            if (!window.latestAstroData) {
+                alert("Please wait for chart calculations to finish.");
+                return;
+            }
+            let d = window.latestAstroData;
+            let name = document.getElementById('i-name').value || "Client";
+            let dob = document.getElementById('i-dob').value;
+            let time = document.getElementById('i-time').value;
+            let city = document.getElementById('i-city').value;
+            let mode = document.getElementById('ctrl-mode').value;
+            let rot = document.getElementById('ctrl-rot').value;
+            
+            let printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                alert("Please allow popups for this site to print the report.");
+                return;
+            }
+            
+            try {
+                let vastuP2cRows = d.vastu_p2c.map(r => {
+                    let rowData = [...r];
+                    let header = rowData.shift();
+                    let cells = rowData.map(c => {
+                        let style = "";
+                        let val = c;
+                        if(c.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; val = c.replace('*',''); }
+                        else if(c.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; val = c.replace('+',''); }
+                        return `<td style="border: 1px solid #ccc; padding: 3px; ${style}">${val}</td>`;
+                    }).join('');
+                    return `<tr><td style="border: 1px solid #ccc; padding: 3px; font-weight:bold; background-color:#f0f0f0;">${header}</td>${cells}</tr>`;
+                }).join('');
+
+                let vastuP2pRows = d.vastu_p2p.map(r => {
+                    let color = r[4].includes('*') ? 'color:#c0392b;' : r[4].includes('+') ? 'color:#27ae60;' : '';
+                    let val = r[4].replace('*','').replace('+','');
+                    return `<tr>
+                        <td style="border: 1px solid #ccc; padding: 3px;"><b>${r[0]}</b></td>
+                        <td style="border: 1px solid #ccc; padding: 3px;">${r[1]}</td>
+                        <td style="border: 1px solid #ccc; padding: 3px;"><b>${r[2]}</b></td>
+                        <td style="border: 1px solid #ccc; padding: 3px;">${r[3]}</td>
+                        <td style="border: 1px solid #ccc; padding: 3px; ${color} font-weight:bold;">${val}</td>
+                    </tr>`;
+                }).join('');
+
+                let html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>${name} - Master Report</title>
+                    <style>
+                        @page { margin: 10mm; size: A4; }
+                        body { font-family: 'Verdana', sans-serif; font-size: 9px; color: #000; background: #fff; line-height: 1.2; }
+                        .header { text-align: center; border-bottom: 2px solid #0d2538; padding-bottom: 5px; margin-bottom: 10px; }
+                        .header h1 { margin: 0; font-size: 16px; color: #0d2538; text-transform: uppercase; }
+                        .header p { margin: 3px 0; font-size: 10px; }
+                        .grid-charts { display: flex; justify-content: space-between; margin-bottom: 15px; }
+                        .chart-box { border: 1px solid #0d2538; width: 32%; text-align: center; padding: 2px; page-break-inside: avoid; border-radius: 4px; }
+                        .chart-box h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; }
+                        .chart-box svg { width: 100%; height: auto; max-width: 250px; }
+                        .section { margin-bottom: 15px; page-break-inside: avoid; border: 1px solid #0d2538; border-radius: 4px; }
+                        .section h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; text-align: center;}
+                        table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 2px; }
+                        th { background-color: #0d2538; color: white; font-weight: bold; padding: 3px; border: 1px solid #ccc; }
+                        td { border: 1px solid #ccc; padding: 3px; }
+                        tr:nth-child(even) td { background-color: #f9f9f9; }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <h1>KP ASTROLOGY MASTER REPORT DETAILS</h1>
+                        <p><b>Name:</b> ${name} | <b>DOB:</b> ${dob} | <b>Time:</b> ${time} | <b>Place:</b> ${city}</p>
+                        <p><b>Mode:</b> ${mode} | <b>Rotated to House:</b> ${rot}</p>
+                    </div>
+                    
+                    <div class="grid-charts">
+                        <div class="chart-box"><h2>Lagna Chart</h2>${d.svg_lagna}</div>
+                        <div class="chart-box"><h2>Bhava Chalit</h2>${d.svg_chalit}</div>
+                        <div class="chart-box"><h2>Lal Kitab (${d.lk_range})</h2>${d.svg_lk}</div>
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; gap: 10px;">
+                        <div class="section" style="width: 50%;">
+                            <h2>Planetary Positions</h2>
+                            <table>
+                                <tr><th>Planet</th><th>Sign</th><th>Degree</th><th>Nakshatra</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr>
+                                ${d.planets.map(r => `<tr><td><b>${r[0]}</b></td><td><b style="color:#0d2538;">${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join('')}
+                            </table>
+                        </div>
+                        <div class="section" style="width: 50%;">
+                            <h2>Cusp Positions</h2>
+                            <table>
+                                <tr><th>House</th><th>Sign</th><th>Degree</th><th>Nakshatra</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr>
+                                ${d.cusps.map(r => `<tr><td><b>${r[0]}</b></td><td><b style="color:#0d2538;">${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join('')}
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div class="section">
+                        <h2>Nadi Significators</h2>
+                        <table>
+                            <tr><th>PLANET</th><th>P-SIGNIFS</th><th>STAR LORD</th><th>ST-SIGNIFS</th><th>SUB LORD</th><th>SB-SIGNIFS</th><th>STAR L OF</th><th>SUB L OF</th></tr>
+                            ${d.nadi.map(r => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td><b style="color:#0d2538;">${r[2]}</b></td><td>${r[3]}</td><td><b style="color:#0d2538;">${r[4]}</b></td><td>${r[5]}</td><td><b>${r[6]}</b></td><td><b>${r[7]}</b></td></tr>`).join('')}
+                        </table>
+                    </div>
+
+                    <div class="section" style="border-color: #1e8449;">
+                        <h2 style="background-color: #1e8449;">Astro Vastu</h2>
+                        <div style="padding: 5px;">
+                            <h3 style="margin: 0 0 5px 0; font-size: 10px; color: #0d2538;">Planet to House Aspects</h3>
+                            <table>
+                                <tr><th style="background-color: #eaecee; color:#0d2538;">Direction</th>${d.vastu_dirs.map(dir => `<th style="background-color: #82e0aa; color:black;">${dir}</th>`).join('')}</tr>
+                                ${vastuP2cRows}
+                            </table>
+                            
+                            <h3 style="margin: 10px 0 5px 0; font-size: 10px; color: #0d2538;">Planet to Planet Aspects</h3>
+                            <table>
+                                <tr><th>FROM</th><th style="background-color:#eaecee; color:#000;">DIR 1</th><th>TO</th><th style="background-color:#eaecee; color:#000;">DIR 2</th><th>ASP</th></tr>
+                                ${vastuP2pRows}
+                            </table>
+                        </div>
+                    </div>
+
+                </body>
+                </html>
+                `;
+
+                printWindow.document.write(html);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => { printWindow.print(); printWindow.close(); }, 500);
+            } catch (e) {
+                printWindow.close();
+                alert("Error generating report: " + e.message);
+            }
         }
 
         async function fetchData() {
             document.getElementById('content-wrap').classList.add('hidden');
             document.getElementById('loader').classList.remove('hidden');
 
+            let calcFmt = getFormattedCalc();
+            let modeStr = document.getElementById('ctrl-mode').value;
+            let rotStr = document.getElementById('ctrl-rot').value;
+
+            document.getElementById('title-lagna').innerText = `Lagna Chart (${modeStr} - House ${rotStr})`;
+            document.getElementById('title-chalit').innerText = `Bhava Chalit (${modeStr} - House ${rotStr})`;
+
             const payload = {
-                date: document.getElementById('i-dob').value,
-                time: document.getElementById('i-time').value,
-                lat: document.getElementById('i-lat').value,
-                lon: document.getElementById('i-lon').value,
-                tz: document.getElementById('i-tz').value,
+                natal_date: natalDateStr, natal_time: natalTimeStr,
+                calc_date: calcFmt.d, calc_time: calcFmt.t,
+                lat: document.getElementById('i-lat').value, lon: document.getElementById('i-lon').value,
+                tz: document.getElementById('i-tz').value, mode: modeStr, rot_house: rotStr,
                 horary: document.getElementById('i-horary').value,
-                aya: document.getElementById('i-aya').value,
-                rahu: document.getElementById('i-rahu').value,
-                age: document.getElementById('d-age').value,
-                mode: document.getElementById('d-mode').value
+                aya: document.getElementById('i-aya').value, rahu: document.getElementById('i-rahu').value,
+                age: document.getElementById('d-age').value
             };
 
             try {
                 const res = await fetch('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const d = await res.json();
-                
                 if (d.status !== 'success') { alert(d.message); return; }
 
-                // Inject SVGs
+                window.latestAstroData = d;
+
                 document.getElementById('svg-lagna').innerHTML = d.svg_lagna;
                 document.getElementById('svg-chalit').innerHTML = d.svg_chalit;
                 document.getElementById('svg-lk').innerHTML = d.svg_lk;
+                
+                document.getElementById('title-lk').innerText = `Lal Kitab Varshphal (${d.lk_range})`;
 
-                // Build Tables
                 const buildTr = (arr, colorCol=null) => arr.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'}">${r.map((c, j) => `<td class="${j===colorCol?'font-bold text-blue-700':''}">${c}</td>`).join('')}</tr>`).join('');
                 
-                document.getElementById('tb-planets').innerHTML = buildTr(d.planets, 1);
-                document.getElementById('tb-cusps').innerHTML = buildTr(d.cusps, 1);
-                document.getElementById('tb-nadi').innerHTML = buildTr(d.nadi);
+                document.getElementById('tb-planets').innerHTML = d.planets.map((r,i) => `
+                    <tr class="${i%2==0?'bg-white':'bg-gray-50'} text-gray-800 border-b border-gray-200 hover:bg-blue-50 transition-colors">
+                        <td class="border border-gray-200 p-2 font-bold">${r[0]}</td>
+                        <td class="border border-gray-200 p-2 text-blue-800 font-bold">${r[1]}</td>
+                        <td class="border border-gray-200 p-2">${r[2]}</td>
+                        <td class="border border-gray-200 p-2">${r[3]}</td>
+                        <td class="border border-gray-200 p-2">${r[4]}</td>
+                        <td class="border border-gray-200 p-2">${r[5]}</td>
+                        <td class="border border-gray-200 p-2">${r[6]}</td>
+                    </tr>
+                `).join('');
+
+                document.getElementById('tb-cusps').innerHTML = d.cusps.map((r,i) => `
+                    <tr class="${i%2==0?'bg-white':'bg-gray-50'} text-gray-800 border-b border-gray-200 hover:bg-green-50 transition-colors">
+                        <td class="border border-gray-200 p-2 font-bold">${r[0]}</td>
+                        <td class="border border-gray-200 p-2 text-green-800 font-bold">${r[1]}</td>
+                        <td class="border border-gray-200 p-2">${r[2]}</td>
+                        <td class="border border-gray-200 p-2">${r[3]}</td>
+                        <td class="border border-gray-200 p-2">${r[4]}</td>
+                        <td class="border border-gray-200 p-2">${r[5]}</td>
+                        <td class="border border-gray-200 p-2">${r[6]}</td>
+                    </tr>
+                `).join('');
+
+                document.getElementById('tb-nadi').innerHTML = d.nadi.map((r,i) => `
+                    <tr class="${i%2==0?'bg-white':'bg-blue-50'} border-b border-gray-200 text-gray-800 hover:bg-gray-100 transition-colors">
+                        <td class="border border-gray-200 p-3 font-bold">${r[0]}</td>
+                        <td class="border border-gray-200 p-3">${r[1]}</td>
+                        <td class="border border-gray-200 p-3 font-bold text-blue-800">${r[2]}</td>
+                        <td class="border border-gray-200 p-3">${r[3]}</td>
+                        <td class="border border-gray-200 p-3 font-bold text-blue-800">${r[4]}</td>
+                        <td class="border border-gray-200 p-3">${r[5]}</td>
+                        <td class="border border-gray-200 p-3 font-bold text-blue-900">${r[6]}</td>
+                        <td class="border border-gray-200 p-3 font-bold text-blue-900">${r[7]}</td>
+                    </tr>
+                `).join('');
                 
-                document.getElementById('tb-p2p').innerHTML = d.hits_p2p.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold"><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('');
-                document.getElementById('tb-p2h').innerHTML = d.hits_p2h.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold"><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('');
+                document.getElementById('tb-p2p').innerHTML = d.hits_p2p.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold border-b border-gray-200 hover:bg-gray-100"><td class="border border-gray-200 p-2">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="border border-gray-200 p-2">${r[4]}</td></tr>`).join('');
+                document.getElementById('tb-p2h').innerHTML = d.hits_p2h.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold border-b border-gray-200 hover:bg-gray-100"><td class="border border-gray-200 p-2">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="border border-gray-200 p-2">${r[4]}</td></tr>`).join('');
+
+                let thHtml = '<tr><th class="bg-[#1e3a8a] text-white p-2 border border-blue-800">Direction</th>';
+                for(let i=1; i<=12; i++) thHtml += `<th class="bg-[#22c55e] text-white p-2 border border-green-700">${d.vastu_dirs[i-1]}</th>`;
+                thHtml += '</tr>';
+                document.getElementById('th-vastu-p2c').innerHTML = thHtml;
+                
+                let tbHtml = '';
+                for(let r of d.vastu_p2c) {
+                    tbHtml += `<tr class="border-b border-gray-200 hover:bg-gray-50"><td class="font-bold bg-gray-100 p-2 border border-gray-200 text-gray-800">${r.shift()}</td>`;
+                    for(let cell of r) {
+                        let style = "";
+                        if(cell.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; cell=cell.replace('*','');}
+                        else if(cell.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; cell=cell.replace('+','');}
+                        tbHtml += `<td style="${style}" class="border border-gray-200 p-2">${cell}</td>`;
+                    }
+                    tbHtml += `</tr>`;
+                }
+                document.getElementById('tb-vastu-p2c').innerHTML = tbHtml;
+                
+                document.getElementById('tb-vastu-p2p').innerHTML = d.vastu_p2p.map((r,i) => {
+                    let color = r[4].includes('*') ? 'text-red-600 bg-red-50' : r[4].includes('+') ? 'text-green-600 bg-green-50' : '';
+                    let val = r[4].replace('*','').replace('+','');
+                    return `<tr class="${i%2==0?'bg-white':'bg-gray-50'} border-b border-gray-200 text-gray-800 hover:bg-gray-100"><td class="border border-gray-200 p-2 font-bold">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2 font-bold">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="${color} border border-gray-200 p-2 font-bold">${val}</td></tr>`;
+                }).join('');
 
                 document.getElementById('loader').classList.add('hidden');
                 document.getElementById('content-wrap').classList.remove('hidden');
-
             } catch (err) {
                 alert("Network Error: " + err);
                 document.getElementById('loader').classList.add('hidden');
@@ -450,75 +957,218 @@ def home():
 def fetch_location_api():
     city_name = request.json.get('city', '').strip().title()
     if not city_name: return jsonify({"status": "error"})
-
-    # 1. Try Offline Dictionary (Fastest)
     matches = gc.get_cities_by_name(city_name)
     if matches:
         city_data_list = []
         for match in matches: city_data_list.extend(match.values())
         if city_data_list:
-            best_match = sorted(city_data_list, key=lambda x: x.get('population', 0), reverse=True)[0]
-            lat, lon = best_match['latitude'], best_match['longitude']
-            tz = best_match.get('timezone') or tf.timezone_at(lng=lon, lat=lat) or 'UTC'
-            return jsonify({"status": "success", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "tz": tz})
-
-    # 2. Try Online Fetch (Nominatim fallback)
+            bm = sorted(city_data_list, key=lambda x: x.get('population', 0), reverse=True)[0]
+            tz = bm.get('timezone') or tf.timezone_at(lng=bm['longitude'], lat=bm['latitude']) or 'UTC'
+            return jsonify({"status": "success", "lat": f"{bm['latitude']:.4f}", "lon": f"{bm['longitude']:.4f}", "tz": tz})
     try:
-        url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
-        headers = {'User-Agent': 'KPAstroAppWeb/1.0'}
-        resp = requests.get(url, headers=headers, timeout=5).json()
+        resp = requests.get(f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1", headers={'User-Agent': 'KPAstroWeb'}, timeout=5).json()
         if resp:
             lat, lon = float(resp[0]['lat']), float(resp[0]['lon'])
-            tz = tf.timezone_at(lng=lon, lat=lat) or 'UTC'
-            return jsonify({"status": "success", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "tz": tz})
+            return jsonify({"status": "success", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "tz": tf.timezone_at(lng=lon, lat=lat) or 'UTC'})
     except: pass
+    return jsonify({"status": "error"})
 
-    return jsonify({"status": "error", "message": "Not found"})
+@app.route('/api/ssub_tracker', methods=['POST'])
+def ssub_tracker_api():
+    data = request.json
+    try:
+        tz = pytz.timezone(data['tz'])
+        dt_from = datetime.strptime(data['start'], "%d-%m-%Y %H:%M:%S")
+        dt_to = datetime.strptime(data['end'], "%d-%m-%Y %H:%M:%S")
+        
+        if (dt_to - dt_from).days > 3:
+            return jsonify({"status": "error", "message": "Limit search to 3 days maximum."})
+
+        aya = data.get('aya', 'K.P.')
+        if aya == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
+        elif aya == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
+        else: swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
+        flags = swe.FLG_SIDEREAL
+
+        if data.get('rahu') == "True": PLANETS["Rahu"] = swe.TRUE_NODE
+        else: PLANETS["Rahu"] = swe.MEAN_NODE
+
+        planet_list = ["Moon", "Sun", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
+        abbr_map = {"Sun":"Su", "Moon":"Mo", "Mars":"Ma", "Mercury":"Me", "Jupiter":"Ju", "Venus":"Ve", "Saturn":"Sa", "Rahu":"Ra", "Ketu":"Ke"}
+
+        def get_lon(dt, p):
+            utc = tz.localize(dt).astimezone(pytz.utc)
+            jd = swe.julday(utc.year, utc.month, utc.day, utc.hour + utc.minute/60.0 + utc.second/3600.0)
+            if p == "Ketu": return (swe.calc_ut(jd, PLANETS["Rahu"], flags)[0][0] + 180.0) % 360.0
+            return swe.calc_ut(jd, PLANETS[p], flags)[0][0]
+
+        states = {}
+        results = {p: [] for p in planet_list}
+        current_dt = dt_from
+        
+        for p in planet_list:
+            states[p] = get_kp_lords(get_lon(current_dt, p))
+
+        delta_min = timedelta(minutes=1)
+        
+        while current_dt < dt_to:
+            next_dt = current_dt + delta_min
+            for p in planet_list:
+                new_state = get_kp_lords(get_lon(next_dt, p))
+                if new_state != states[p]:
+                    exact_dt = current_dt
+                    for sec in range(1, 61):
+                        test_dt = current_dt + timedelta(seconds=sec)
+                        t_state = get_kp_lords(get_lon(test_dt, p))
+                        if t_state != states[p]:
+                            exact_dt = test_dt
+                            states[p] = t_state
+                            val_str = f"{abbr_map.get(t_state[0], t_state[0][:2])}/{abbr_map.get(t_state[1], t_state[1][:2])}/{abbr_map.get(t_state[2], t_state[2][:2])}"
+                            results[p].append({
+                                "date": exact_dt.strftime("%d %b"),
+                                "time": exact_dt.strftime("%H:%M:%S"),
+                                "val": val_str
+                            })
+                            break
+            current_dt = next_dt
+
+        return jsonify({"status": "success", "results": results})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route('/api/forward_check', methods=['POST'])
+def forward_check():
+    data = request.json
+    try:
+        dt = datetime.strptime(data['date'], "%d-%m-%Y")
+        tz = pytz.timezone(data['tz'])
+        p_id = PLANETS.get(data['planet'], swe.SUN)
+        
+        aya = data.get('aya', 'K.P.')
+        if aya == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
+        elif aya == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
+        else: swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
+        flags = swe.FLG_SIDEREAL
+
+        t_type = data['t_type']
+        t_val_input = float(data['t_val'])
+        if t_type in ["Sign", "Nakshatra"]:
+            t_val = t_val_input - 1
+        else:
+            t_val = t_val_input
+        
+        span = 30.0 if t_type == "Sign" else (360.0/27.0) if t_type == "Nakshatra" else 360.0
+        target_lon = t_val * span if t_type != "Degree" else t_val % 360.0
+
+        msg_prefix = ""
+        prev_match = None
+
+        for i in range(36500): # 100 years max
+            utc = tz.localize(dt).astimezone(pytz.utc)
+            jd = swe.julday(utc.year, utc.month, utc.day, 12.0)
+            
+            lon = (swe.calc_ut(jd, PLANETS["Rahu"], flags)[0][0] + 180.0)%360.0 if data['planet'] == "Ketu" else swe.calc_ut(jd, p_id, flags)[0][0]
+            
+            curr_match = False
+            if t_type in ["Sign", "Nakshatra"]:
+                curr_match = (int(lon / span) == t_val)
+            else:
+                diff = abs(lon - target_lon)
+                curr_match = (diff < 1.0 or diff > 359.0)
+
+            if prev_match is None:
+                prev_match = curr_match
+                if curr_match and i == 0:
+                    msg_prefix = "Already in target on Start Date! Next entry: "
+
+            if curr_match and not prev_match and i > 0:
+                result_str = f"{data['planet']} enters target around {dt.strftime('%d-%m-%Y')}"
+                if msg_prefix:
+                    result_str = msg_prefix + dt.strftime('%d-%m-%Y')
+                return jsonify({"status": "success", "result": result_str})
+            
+            prev_match = curr_match
+            dt += timedelta(days=1)
+            
+        return jsonify({"status": "success", "result": "Target not reached within 100 years."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/api/retro_report', methods=['POST'])
+def retro_report():
+    data = request.json
+    try:
+        curr = datetime.strptime(data['start'], "%d-%m-%Y")
+        end = datetime.strptime(data['end'], "%d-%m-%Y")
+        tz = pytz.timezone(data['tz'])
+        p_id = PLANETS.get(data['planet'])
+        flags = swe.FLG_SPEED | swe.FLG_SIDEREAL
+        
+        prev_speed = None
+        results = []
+        
+        while curr <= end:
+            utc = tz.localize(curr).astimezone(pytz.utc)
+            jd = swe.julday(utc.year, utc.month, utc.day, 12.0)
+            speed = swe.calc_ut(jd, p_id, flags)[0][3]
+            
+            if prev_speed is not None:
+                if prev_speed > 0 and speed < 0: results.append({"date": curr.strftime("%d-%b-%Y"), "status": "Direct ➔ RETROGRADE"})
+                elif prev_speed < 0 and speed > 0: results.append({"date": curr.strftime("%d-%b-%Y"), "status": "Retro ➔ DIRECT"})
+            prev_speed = speed
+            curr += timedelta(days=1)
+            
+        return jsonify({"status": "success", "results": results})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/calculate', methods=['POST'])
 def calculate_api():
     data = request.json
     try:
-        # 1. Parse Data & TZ Localization
-        dt = datetime.strptime(f"{data['date']} {data['time']}", "%d-%m-%Y %H:%M:%S")
-        tz = pytz.timezone(data['tz'])
-        utc_dt = tz.localize(dt).astimezone(pytz.utc)
-        
-        # CRITICAL FIX: The seconds calculation was missing in the previous version!
-        jd = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, utc_dt.hour + utc_dt.minute/60.0 + utc_dt.second/3600.0)
-        
-        # 2. Ayanamsa
         aya = data.get('aya', 'K.P.')
         if aya == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
         elif aya == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
         else: swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
-        
         flags = swe.FLG_SIDEREAL | swe.FLG_SPEED
+
+        tz = pytz.timezone(data['tz'])
+        natal_dt = datetime.strptime(f"{data['natal_date']} {data['natal_time']}", "%d-%m-%Y %H:%M:%S")
+        natal_utc = tz.localize(natal_dt).astimezone(pytz.utc)
+        natal_jd = swe.julday(natal_utc.year, natal_utc.month, natal_utc.day, natal_utc.hour + natal_utc.minute/60.0 + natal_utc.second/3600.0)
         
-        # 3. Cusps & Horary Adjustment
-        cusps_raw, _ = swe.houses_ex(jd, float(data['lat']), float(data['lon']), b'P', flags=flags)
-        
+        lat, lon = float(data['lat']), float(data['lon'])
+        natal_cusps, _ = swe.houses_ex(natal_jd, lat, lon, b'P', flags=flags)
+        true_asc_sign = int(natal_cusps[0] / 30) + 1
+
+        calc_dt = datetime.strptime(f"{data['calc_date']} {data['calc_time']}", "%d-%m-%Y %H:%M:%S")
+        calc_utc = tz.localize(calc_dt).astimezone(pytz.utc)
+        calc_jd = swe.julday(calc_utc.year, calc_utc.month, calc_utc.day, calc_utc.hour + calc_utc.minute/60.0 + calc_utc.second/3600.0)
+
+        cusps_raw, _ = swe.houses_ex(calc_jd, lat, lon, b'P', flags=flags)
         mode = data.get('mode', 'Natal')
         try:
-            if mode == "Horary":
-                h_num = int(data.get('horary', 1))
-                if 1 <= h_num <= 249:
-                    h_asc = get_horary_ascendant(h_num)
-                    diff = h_asc - cusps_raw[0]
-                    cusps_raw = [(c + diff) % 360 for c in cusps_raw]
+            if mode == "Horary" and 1 <= int(data.get('horary', 1)) <= 249:
+                diff = get_horary_ascendant(data['horary']) - cusps_raw[0]
+                cusps_raw = [(c + diff) % 360 for c in cusps_raw]
         except: pass
+
+        rot = int(data.get('rot_house', 1)) - 1
+        if rot > 0: cusps_raw = [cusps_raw[(i + rot) % 12] for i in range(12)]
 
         asc_sign = int(cusps_raw[0] / 30) + 1
         lagna_signs = [((asc_sign + i - 1) % 12) + 1 for i in range(12)]
         chalit_signs = [int(c / 30) + 1 for c in cusps_raw]
 
+        nak_span = 360.0 / 27.0
         cusp_res = []
         for i in range(12):
             c_lon = cusps_raw[i]
             st, sb, ssb = get_kp_lords(c_lon)
-            cusp_res.append([i+1, ZODIAC[int(c_lon/30)], format_dms(c_lon), st, sb, ssb])
+            nak_name = NAKSHATRAS[int(c_lon / nak_span)]
+            cusp_res.append([i+1, ZODIAC[int(c_lon/30)], format_dms(c_lon), nak_name, st, sb, ssb])
 
-        # 4. Planets & Rahu setting
         if data.get('rahu') == "True": PLANETS["Rahu"] = swe.TRUE_NODE
         else: PLANETS["Rahu"] = swe.MEAN_NODE
 
@@ -527,36 +1177,34 @@ def calculate_api():
         h_lagna, h_chalit = {i: [] for i in range(1, 13)}, {i: [] for i in range(1, 13)}
 
         for name, p_id in PLANETS.items():
-            calc, _ = swe.calc_ut(jd, p_id, flags)
-            lon = calc[0]
-            if name == "Rahu": rahu_lon = lon
+            calc, _ = swe.calc_ut(calc_jd, p_id, flags)
+            p_lon = calc[0]
+            if name == "Rahu": rahu_lon = p_lon
             is_retro = calc[3] < 0 if name not in ["Sun", "Moon"] else False
             disp = f"{name}(R)" if is_retro else name
-            st, sb, ssb = get_kp_lords(lon)
+            st, sb, ssb = get_kp_lords(p_lon)
+            nak_name = NAKSHATRAS[int(p_lon / nak_span)]
             
-            planet_res.append([disp, ZODIAC[int(lon/30)], format_dms(lon), st, sb, ssb])
-            p_data[name] = {"lon": lon, "st": st, "sb": sb}
+            planet_res.append([disp, ZODIAC[int(p_lon/30)], format_dms(p_lon), nak_name, st, sb, ssb])
+            p_data[name] = {"lon": p_lon, "st": st, "sb": sb, "retro": is_retro}
             
-            l_house = (int(lon/30) + 1 - asc_sign + 12) % 12 + 1
-            h_lagna[l_house].append(name[:2])
+            h_lagna[(int(p_lon/30) + 1 - asc_sign + 12) % 12 + 1].append(name[:2])
             for h_idx in range(12):
                 h_s, h_e = cusps_raw[h_idx], cusps_raw[(h_idx + 1) % 12]
-                if (h_s < h_e and h_s <= lon < h_e) or (h_s > h_e and (lon >= h_s or lon < h_e)):
+                if (h_s < h_e and h_s <= p_lon < h_e) or (h_s > h_e and (p_lon >= h_s or p_lon < h_e)):
                     h_chalit[h_idx+1].append(name[:2]); break
 
-        # Manual Ketu
         k_lon = (rahu_lon + 180.0) % 360.0
         st, sb, ssb = get_kp_lords(k_lon)
-        planet_res.append(["Ketu(R)", ZODIAC[int(k_lon/30)], format_dms(k_lon), st, sb, ssb])
-        p_data["Ketu"] = {"lon": k_lon, "st": st, "sb": sb}
-        
+        k_nak_name = NAKSHATRAS[int(k_lon / nak_span)]
+        planet_res.append(["Ketu(R)", ZODIAC[int(k_lon/30)], format_dms(k_lon), k_nak_name, st, sb, ssb])
+        p_data["Ketu"] = {"lon": k_lon, "st": st, "sb": sb, "retro": True}
         h_lagna[(int(k_lon/30) + 1 - asc_sign + 12) % 12 + 1].append("Ke")
         for h_idx in range(12):
             h_s, h_e = cusps_raw[h_idx], cusps_raw[(h_idx + 1) % 12]
             if (h_s < h_e and h_s <= k_lon < h_e) or (h_s > h_e and (k_lon >= h_s or k_lon < h_e)):
                 h_chalit[h_idx+1].append("Ke"); break
 
-        # 5. Nadi Significators
         nadi_res = []
         nadi_order = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
         base_sigs = {}
@@ -569,15 +1217,77 @@ def calculate_api():
             owns = [i+1 for i in range(12) if SIGN_LORDS[chalit_signs[i]-1] == p] if p not in ["Rahu", "Ketu"] else []
             base_sigs[p] = {'occ': occ, 'owns': owns}
 
+        star_lord_of = {p: [] for p in nadi_order}
+        sub_lord_of = {p: [] for p in nadi_order}
+        for row in cusp_res:
+            h_num = str(row[0])
+            if row[4] in star_lord_of: star_lord_of[row[4]].append(h_num)
+            if row[5] in sub_lord_of: sub_lord_of[row[5]].append(h_num)
+
         for p in nadi_order:
             sig = sorted(list(set([base_sigs[p]['occ']] + base_sigs[p]['owns'])))
             st = p_data[p]['st']
             st_sig = sorted(list(set([base_sigs[st]['occ']] + base_sigs[st]['owns'])))
             sb = p_data[p]['sb']
             sb_sig = sorted(list(set([base_sigs[sb]['occ']] + base_sigs[sb]['owns'])))
-            nadi_res.append([p, ", ".join(map(str, sig)) or "-", st, ", ".join(map(str, st_sig)) or "-", sb, ", ".join(map(str, sb_sig)) or "-"])
+            
+            st_of_str = ", ".join(star_lord_of[p]) or "-"
+            sb_of_str = ", ".join(sub_lord_of[p]) or "-"
+            
+            nadi_res.append([
+                p, 
+                ", ".join(map(str, sig)) or "-", 
+                st, 
+                ", ".join(map(str, st_sig)) or "-", 
+                sb, 
+                ", ".join(map(str, sb_sig)) or "-",
+                st_of_str,
+                sb_of_str
+            ])
 
-        # 6. Degree Hits
+        # VASTU Calculations
+        vastu_dirs = [SIGN_PROPS[s]["dir"] for s in range(1, 13)]
+        vastu_p2c = []
+        for r_title in ["Zodiac", "Lord", "Tatwa", "Mobility", "Sign No", "House"]:
+            row = [r_title]
+            for s_idx in range(1, 13):
+                h_num = (s_idx - asc_sign + 12) % 12 + 1
+                if r_title == "Zodiac": row.append(ZODIAC[s_idx-1][:4])
+                elif r_title == "Lord": row.append(SIGN_LORDS[s_idx-1][:3])
+                elif r_title == "Tatwa": row.append(SIGN_PROPS[s_idx]["tatwa"])
+                elif r_title == "Mobility": row.append(SIGN_PROPS[s_idx]["mob"][:3])
+                elif r_title == "Sign No": row.append(f"{s_idx}({SIGN_PROPS[s_idx]['gender']})")
+                elif r_title == "House": row.append(str(h_num))
+            vastu_p2c.append(row)
+
+        for p in ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]:
+            row = [p[:3]]
+            p_lon = p_data[p]['lon']
+            for s_idx in range(1, 13):
+                h_num = (s_idx - asc_sign + 12) % 12 + 1
+                diff = (cusps_raw[h_num - 1] - p_lon) % 360
+                shortest = diff if diff <= 180 else 360 - diff
+                val_str = f"{diff:.2f}"
+                if (diff < 360 - 3.0) and (diff > 3.0) and (abs(diff - 270) > 3.0):
+                    if any(abs(shortest - d) <= 3.0 for d in [45, 90, 135, 180]): val_str += "*" 
+                    elif any(abs(shortest - d) <= 3.0 for d in [30, 60, 120]): val_str += "+" 
+                row.append(val_str)
+            vastu_p2c.append(row)
+
+        vastu_p2p = []
+        for i in range(9):
+            for j in range(i+1, 9):
+                p1, p2 = nadi_order[i], nadi_order[j]
+                lon1, lon2 = p_data[p1]['lon'], p_data[p2]['lon']
+                d1 = SIGN_PROPS[int(lon1/30)+1]["dir"]
+                d2 = SIGN_PROPS[int(lon2/30)+1]["dir"]
+                diff = (lon2 - lon1) % 360
+                sh = diff if diff <= 180 else 360 - diff
+                val_str = f"{diff:.2f}"
+                if any(abs(sh - d) <= 3.0 for d in [45, 90, 135, 180]): val_str += "*"
+                elif any(abs(sh - d) <= 3.0 for d in [30, 60, 120]): val_str += "+"
+                vastu_p2p.append([p1[:3], d1, p2[:3], d2, val_str])
+
         hits_p2p, hits_p2h = [], []
         p_keys = list(p_data.keys())
         for i in range(len(p_keys)):
@@ -593,25 +1303,33 @@ def calculate_api():
                 diff = abs(p_info['lon'] - cusps_raw[h_idx])
                 diff = 360 - diff if diff > 180 else diff
                 for asp_deg, (asp_name, nature) in DEGREE_ASPECTS.items():
-                    if abs(diff - asp_deg) <= 3.0: hits_p2h.append([p_name, f"House {h_idx+1}", asp_name, f"{diff:.2f}°", nature])
+                    if abs(diff - asp_deg) <= 3.0: hits_p2h.append([p_name, f"H {h_idx+1}", asp_name, f"{diff:.2f}°", nature])
 
-        # 7. Lal Kitab
         age = int(data.get('age', 51))
+        
+        try: from_dt = natal_dt.replace(year=natal_dt.year + age - 1)
+        except ValueError: from_dt = natal_dt + timedelta(days=365.25 * (age - 1))
+        try: to_dt = natal_dt.replace(year=natal_dt.year + age)
+        except ValueError: to_dt = natal_dt + timedelta(days=365.25 * age)
+        to_dt = to_dt - timedelta(days=1)
+        lk_range = f"{from_dt.strftime('%d-%m-%Y')} to {to_dt.strftime('%d-%m-%Y')}"
+
         varshphal = {i: [] for i in range(1, 13)}
         for p in nadi_order:
-            n_house = (int(p_data[p]['lon']/30) + 1 - asc_sign + 12) % 12 + 1
-            varshphal[LK_MATRIX[age - 1][n_house - 1]].append(p[:2])
+            lon = (p_data["Rahu"]['lon'] + 180)%360 if p == "Ketu" else swe.calc_ut(natal_jd, PLANETS[p], flags)[0][0]
+            varshphal[LK_MATRIX[age - 1][(int(lon/30) + 1 - true_asc_sign + 12) % 12]].append(p[:2])
 
         return jsonify({
             "status": "success",
             "planets": planet_res, "cusps": cusp_res, "nadi": nadi_res,
             "hits_p2p": hits_p2p, "hits_p2h": hits_p2h,
+            "vastu_dirs": vastu_dirs, "vastu_p2c": vastu_p2c, "vastu_p2p": vastu_p2p,
             "svg_lagna": draw_svg_square(h_lagna, lagna_signs, "Lagna"),
             "svg_chalit": draw_svg_square(h_chalit, chalit_signs, "Chalit"),
-            "svg_lk": draw_svg_lk(varshphal)
+            "svg_lk": draw_svg_lk(varshphal),
+            "lk_range": lk_range
         })
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e: return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True)
