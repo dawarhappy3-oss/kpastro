@@ -1,10 +1,12 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 import swisseph as swe
 from datetime import datetime, timedelta
 import pytz
 import requests
 import geonamescache
 from timezonefinder import TimezoneFinder
+import os
+import csv
 
 app = Flask(__name__)
 
@@ -12,7 +14,10 @@ app = Flask(__name__)
 gc = geonamescache.GeonamesCache(min_city_population=1000)
 tf = TimezoneFinder()
 
+# Define your swe path if needed (Keep empty string if ephe files are in same directory)
 swe.set_ephe_path('')
+
+DB_FILE = "kp_clients_database.csv"
 
 # --- CONSTANTS ---
 PLANETS = {"Sun": swe.SUN, "Moon": swe.MOON, "Mars": swe.MARS, "Mercury": swe.MERCURY, "Jupiter": swe.JUPITER, "Venus": swe.VENUS, "Saturn": swe.SATURN, "Rahu": swe.MEAN_NODE}
@@ -106,44 +111,100 @@ def format_dms(d):
     d_val = d % 30
     deg = int(d_val)
     m = int((d_val-deg)*60)
-    s = int((d_val-deg-m/60)*3600)
+    s = int(round((d_val-deg-m/60)*3600))
+    if s == 60: s = 0; m += 1
+    if m == 60: m = 0; deg += 1
     return f"{deg:02d}° {m:02d}' {s:02d}\""
 
 def get_kp_lords(lon):
-    sp = 360/27; n = int(lon/sp); st = LORDS[n%9]
-    rem = lon - (n*sp); ps = 0.0; sb = ""; ssb = ""; sidx = 0; s_sp = 0
+    lon_sec = int(round((lon + 1e-8) * 3600)) % 1296000
+    nak_idx = lon_sec // 48000
+    star_lord_idx = nak_idx % 9
+    st = LORDS[star_lord_idx]
+    
+    rem_sec = lon_sec % 48000
+    curr_sec = 0
+    sb_idx = star_lord_idx
+    sub_start_sec = 0
+    sb = ""
+    
     for i in range(9):
-        idx = (n%9 + i)%9
-        s_sp = (YRS[idx]/120)*sp; ps += s_sp
-        if rem <= ps: 
-            sb = LORDS[idx]; sidx = idx; break
-    rem_s = rem - (ps - s_sp); ps_s = 0.0
+        span = YRS[sb_idx] * 400
+        curr_sec += span
+        if rem_sec < curr_sec:
+            sb = LORDS[sb_idx]
+            sub_start_sec = curr_sec - span
+            break
+        sb_idx = (sb_idx + 1) % 9
+        
+    rem_ss_sec = rem_sec - sub_start_sec
+    rem_ss_sec_x3 = rem_ss_sec * 3
+    curr_ss_sec_x3 = 0
+    ssb_idx = sb_idx
+    ssb = ""
+    
     for i in range(9):
-        idx = (sidx + i)%9
-        ss_sp = (YRS[idx]/120)*s_sp; ps_s += ss_sp
-        if rem_s <= ps_s: 
-            ssb = LORDS[idx]; break
+        span_ss_x3 = YRS[sb_idx] * YRS[ssb_idx] * 10
+        curr_ss_sec_x3 += span_ss_x3
+        if rem_ss_sec_x3 < curr_ss_sec_x3:
+            ssb = LORDS[ssb_idx]
+            break
+        ssb_idx = (ssb_idx + 1) % 9
+        
     return st, sb, ssb
 
 def get_horary_ascendant(number):
     num = int(number)
-    curr_deg, curr_idx = 0.0, 1
+    if num < 1 or num > 249: return 0.0
+    
+    curr_sec = 0
+    curr_idx = 1
     for star in range(27):
         star_lord = star % 9
         for sub in range(9):
             sub_lord = (star_lord + sub) % 9
-            span = (YRS[sub_lord] / 120.0) * (360.0 / 27.0)
-            next_deg = curr_deg + span
-            if int(next_deg/30) > int(curr_deg/30) and abs(next_deg%30) > 1e-6:
-                if curr_idx == num: return curr_deg
+            span_sec = YRS[sub_lord] * 400
+            next_sec = curr_sec + span_sec
+            boundary = (curr_sec // 108000 + 1) * 108000
+            
+            if curr_sec < boundary and next_sec > boundary:
+                if curr_idx == num: return (curr_sec / 3600.0) + 1e-5
                 curr_idx += 1
-                if curr_idx == num: return int(next_deg/30)*30.0
+                if curr_idx == num: return (boundary / 3600.0) + 1e-5
                 curr_idx += 1
             else:
-                if curr_idx == num: return curr_deg
+                if curr_idx == num: return (curr_sec / 3600.0) + 1e-5
                 curr_idx += 1
-            curr_deg = next_deg
+            curr_sec = next_sec
     return 0.0
+
+def get_placidus_cusps(jd, lat, lon, mode="Natal", horary_num=1, flags=0):
+    cusp_orig, _ = swe.houses_ex(jd, lat, lon, b'P', flags=flags)
+    
+    if mode == "Horary" and 1 <= horary_num <= 249:
+        target_asc = get_horary_ascendant(horary_num)
+        temp_jd = jd
+        for _ in range(15):
+            c_temp, _ = swe.houses_ex(temp_jd, lat, lon, b'P', flags=flags)
+            curr_asc = c_temp[0]
+            diff = target_asc - curr_asc
+            if diff > 180: diff -= 360
+            elif diff < -180: diff += 360
+            
+            if abs(diff) < 0.000001: break
+                
+            c_plus, _ = swe.houses_ex(temp_jd + 0.0001, lat, lon, b'P', flags=flags)
+            asc_plus = c_plus[0]
+            diff_plus = asc_plus - curr_asc
+            if diff_plus < 0: diff_plus += 360
+            rate = diff_plus / 0.0001
+            if rate < 10: rate = 360.0
+            
+            temp_jd += (diff / rate)
+            
+        cusp_orig, _ = swe.houses_ex(temp_jd, lat, lon, b'P', flags=flags)
+        
+    return list(cusp_orig)
 
 def get_kp_color(p_name):
     c = {"Sun": "#b03a2e", "Moon": "#21618c", "Mars": "#cb4335", "Mercury": "#1e8449", "Jupiter": "#d35400", "Venus": "#c71585", "Saturn": "#2874a6", "Rahu": "#873600", "Ketu": "#873600", "Asc": "#d35400"}
@@ -151,7 +212,7 @@ def get_kp_color(p_name):
         if k in p_name: return c[k]
     return "#000000"
 
-def draw_svg_square(house_data, cusp_signs, title):
+def draw_svg_square(house_data, cusp_signs):
     svg = '<svg viewBox="0 0 400 400" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">\n'
     svg += '<rect x="0" y="0" width="400" height="400" fill="#fdf0d5"/>\n' 
     gc, gw = "#8c7b65", "1.5"
@@ -187,7 +248,6 @@ def draw_svg_lk(house_data):
 
     for i in range(1, 13):
         px, py = pos[i]; ox, oy = offsets[i]
-        # Draw fixed Kal Purush numbers as requested in Ledger
         svg += f'<text x="{px + ox}" y="{py + oy + 4}" text-anchor="middle" font-size="11" font-family="Arial" fill="#c0392b">{i}</text>\n'
         planets = house_data.get(i, [])
         if planets:
@@ -214,7 +274,6 @@ def calculate_dasha(moon_lon, start_dt, current_eval_dt):
     dasha_list = []
     md_start = start_dt - timedelta(days=(1 - rem_prc) * YRS[idx] * 365.2425)
     
-    # 5-Level Deep Dasha Loop
     for i in range(9):
         md_idx = (idx + i) % 9
         md_days = YRS[md_idx] * 365.2425
@@ -272,8 +331,8 @@ def calculate_dasha(moon_lon, start_dt, current_eval_dt):
                     
                 pd_list.append({
                     "lord": LORDS[pd_idx],
-                    "start": pd_start.strftime("%d-%m-%Y"),
-                    "end": pd_end.strftime("%d-%m-%Y"),
+                    "start": pd_start.strftime("%d-%m-%Y %H:%M"),
+                    "end": pd_end.strftime("%d-%m-%Y %H:%M"),
                     "active": pd_active,
                     "subs": sd_list
                 })
@@ -348,23 +407,44 @@ HTML_PAGE = """
                 <div>
                     <label class="block text-sm font-bold text-blue-900 mb-1">Ayanamsa</label>
                     <select id="i-aya" class="w-full border border-gray-200 rounded p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="Chitrapaksha" selected>Lahiri</option>
-                        <option value="K.P.">K.P.</option>
+                        <option value="Chitrapaksha">Lahiri</option>
+                        <option value="K.P." selected>K.P.</option>
                         <option value="Raman">Raman</option>
                     </select>
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-blue-900 mb-1">Rahu</label>
                     <select id="i-rahu" class="w-full border border-gray-200 rounded p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="Mean">Mean Node</option>
+                        <option value="Mean" selected>Mean Node</option>
                         <option value="True">True Node</option>
                     </select>
                 </div>
             </div>
 
-            <button onclick="openDashboard()" class="w-full bg-[#16a34a] hover:bg-[#15803d] text-white font-bold py-3 px-4 rounded text-lg shadow drop-shadow-md tracking-wider">
-                OPEN DASHBOARD
-            </button>
+            <div class="flex gap-4">
+                <button onclick="saveClient()" class="w-1/3 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded shadow tracking-wide">SAVE CHART</button>
+                <button onclick="openModal('db-modal'); loadClients();" class="w-1/3 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-4 rounded shadow tracking-wide">OPEN CHART</button>
+                <button onclick="openDashboard()" class="w-1/3 bg-[#16a34a] hover:bg-[#15803d] text-white font-bold py-3 px-4 rounded shadow tracking-wide">OPEN DASHBOARD</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="db-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-2xl p-6 max-w-4xl w-full border border-gray-300 relative">
+            <button onclick="closeModal('db-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
+            <h2 class="text-2xl font-bold text-orange-600 mb-6 tracking-wide">Open Saved Chart</h2>
+            
+            <div class="flex gap-4 mb-4">
+                <label class="font-bold mt-2">🔍 Search Name / City / DOB:</label>
+                <input type="text" id="db-search" onkeyup="filterClients()" class="border border-gray-300 p-2 rounded w-1/2 focus:outline-none focus:ring-1 focus:ring-orange-400">
+            </div>
+
+            <div class="h-64 overflow-y-auto border border-gray-200 rounded mb-4">
+                <table class="w-full text-sm text-center border-collapse">
+                    <thead class="bg-gray-100 text-gray-700 sticky top-0 shadow-sm"><tr><th class="p-2 border">Name</th><th class="p-2 border">DOB</th><th class="p-2 border">Time</th><th class="p-2 border">City</th><th class="p-2 border">Saved On</th><th class="p-2 border">Action</th></tr></thead>
+                    <tbody id="db-body"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -499,6 +579,14 @@ HTML_PAGE = """
                         <tbody id="tb-vastu-p2p"></tbody>
                     </table>
                 </div>
+                
+                <div class="bg-white shadow rounded overflow-x-auto border border-gray-200">
+                    <h3 class="font-bold text-red-900 p-3 bg-gray-50 border-b">House to House Aspects (Medical)</h3>
+                    <table class="w-full text-xs text-center border-collapse">
+                        <thead id="th-vastu-h2h"></thead>
+                        <tbody id="tb-vastu-h2h"></tbody>
+                    </table>
+                </div>
             </div>
             
             <div id="tab-dasha" class="tab-pane hidden bg-white shadow rounded p-4 overflow-auto max-h-[600px] border border-gray-200">
@@ -512,54 +600,59 @@ HTML_PAGE = """
         </div>
     </div>
 
-    <div id="ssub-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div class="bg-gray-100 rounded-lg shadow-2xl p-6 max-w-5xl w-full border-4 border-teal-500 relative flex flex-col max-h-[90vh]">
-            <button onclick="closeModal('ssub-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
-            <h2 class="text-2xl font-bold text-teal-800 mb-4 tracking-wide">Planet Sub-Sub Lord Tracker Matrix</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 shrink-0">
-                <div><label class="text-xs font-bold text-gray-700 mb-1 block">From (DD-MM-YYYY HH:MM:SS)</label><input type="text" id="ss-start" class="w-full border p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"></div>
-                <div><label class="text-xs font-bold text-gray-700 mb-1 block">To (DD-MM-YYYY HH:MM:SS)</label><input type="text" id="ss-end" class="w-full border p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"></div>
-            </div>
-            <button onclick="runSSubTracker()" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 rounded mb-4 shadow transition-colors shrink-0">Generate Matrix (Max 3 Days)</button>
-            
-            <div id="ss-loader" class="hidden text-center text-teal-600 font-bold py-4 shrink-0">Calculating exact matrix minute-by-minute... This may take a few seconds.</div>
-            
-            <div class="overflow-y-auto border border-gray-300 rounded p-4 bg-white flex-1" id="ss-body"></div>
-        </div>
-    </div>
-
     <div id="forward-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div class="bg-[#fcf5cd] rounded-md shadow-2xl p-6 max-w-2xl w-full relative border-2 border-yellow-200">
-            <button onclick="closeModal('forward-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
-            <h2 class="text-2xl font-bold text-[#b91c1c] mb-6 tracking-wide">Forward Checking of Planet</h2>
+        <div class="bg-[#f4d03f] rounded-md shadow-2xl p-6 max-w-4xl w-full relative border border-yellow-600 flex flex-col md:flex-row gap-4">
+            <button onclick="closeModal('forward-modal')" class="absolute top-2 right-4 font-bold text-3xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
             
-            <div class="grid grid-cols-2 gap-x-6 gap-y-4 mb-6">
-                <div>
-                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Start Date (DD-MM-YYYY)</label>
-                    <input type="text" id="fc-date" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
+            <div class="w-full md:w-1/3 flex flex-col gap-4 mt-6 md:mt-0">
+                <div class="flex items-center gap-2">
+                    <label class="font-bold text-[#c0392b]">Set Date</label>
+                    <input type="text" id="fc-date" class="border border-gray-400 p-1 w-28 rounded bg-white">
                 </div>
-                <div>
-                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Target Type</label>
-                    <select id="fc-type" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
-                        <option value="Sign">Sign (1-12)</option>
-                        <option value="Nakshatra">Nakshatra (1-27)</option>
-                        <option value="Degree">Exact Degree (0-360)</option>
-                    </select>
+                
+                <div class="bg-[#e8daef] p-3 rounded border border-gray-400">
+                    <div class="font-bold text-[#c0392b] mb-2 border-b border-gray-400 pb-1 flex items-center gap-2">
+                        <input type="radio" checked disabled> PLANETS
+                    </div>
+                    <div class="flex flex-col gap-2 pl-2 text-sm font-semibold">
+                        <label><input type="radio" name="fc_planet" value="Sun" checked onchange="updateFcTargetUI()"> Sun</label>
+                        <label><input type="radio" name="fc_planet" value="Moon" onchange="updateFcTargetUI()"> Moon</label>
+                        <label><input type="radio" name="fc_planet" value="Mars" onchange="updateFcTargetUI()"> Mars</label>
+                        <label><input type="radio" name="fc_planet" value="Mercury" onchange="updateFcTargetUI()"> Mercury</label>
+                        <label><input type="radio" name="fc_planet" value="Jupiter" onchange="updateFcTargetUI()"> Jupiter</label>
+                        <label><input type="radio" name="fc_planet" value="Venus" onchange="updateFcTargetUI()"> Venus</label>
+                        <label><input type="radio" name="fc_planet" value="Saturn" onchange="updateFcTargetUI()"> Saturn</label>
+                        <label><input type="radio" name="fc_planet" value="Rahu" onchange="updateFcTargetUI()"> Rahu</label>
+                        <label><input type="radio" name="fc_planet" value="Ketu" onchange="updateFcTargetUI()"> Ketu</label>
+                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Planet</label>
-                    <select id="fc-planet" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
-                        <option>Sun</option><option>Moon</option><option>Mars</option><option>Mercury</option><option>Jupiter</option><option>Venus</option><option>Saturn</option><option>Rahu</option><option>Ketu</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-[#0f172a] mb-1">Target Value</label>
-                    <input type="text" id="fc-val" value="1" class="w-full border border-gray-300 p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-yellow-400">
-                </div>
+                
+                <button onclick="runForwardCheck()" class="bg-[#e2e8f0] hover:bg-[#cbd5e1] text-black font-bold py-2 px-4 rounded border border-gray-500 shadow mt-auto">Start Checking</button>
             </div>
             
-            <button onclick="runForwardCheck()" class="w-full bg-[#cbd5e1] hover:bg-[#94a3b8] text-black font-bold py-3 rounded shadow transition-colors">Start Checking (Max 100 Yrs)</button>
-            <p id="fc-res" class="mt-6 font-bold text-center text-lg text-[#1d4ed8]"></p>
+            <div class="w-full md:w-2/3 flex flex-col gap-4 md:mt-0">
+                <div class="border border-[#c0392b] p-3 rounded bg-[#f4d03f]">
+                    <div class="grid grid-cols-2 text-sm text-[#c0392b] font-bold gap-y-2">
+                        <div class="flex items-center gap-2">Country <input type="text" value="INDIA" class="border border-gray-400 p-1 w-32 bg-white text-black" readonly></div>
+                        <div id="fc-disp-lat">Latitude</div>
+                        <div class="flex items-center gap-2">City <input type="text" id="fc-city" class="border border-gray-400 p-1 w-32 bg-white text-black" readonly></div>
+                        <div id="fc-disp-lon">Longitude</div>
+                        <div class="col-span-2 text-right" id="fc-disp-tz">Time Zone: </div>
+                    </div>
+                </div>
+                
+                <div class="bg-[#e8daef] p-3 rounded border border-gray-400 flex-1">
+                    <div class="flex justify-around font-bold text-[#c0392b] mb-2 border-b border-gray-400 pb-2">
+                        <label><input type="radio" name="fc_ttype" value="Sign" checked onchange="updateFcTargetUI()"> Sign</label>
+                        <label><input type="radio" name="fc_ttype" value="Nakshatra" onchange="updateFcTargetUI()"> Nakshatra</label>
+                        <label><input type="radio" name="fc_ttype" value="Degree" onchange="updateFcTargetUI()"> Degree</label>
+                    </div>
+                    <div id="fc-target-container" class="text-sm font-semibold text-[#c0392b] overflow-y-auto max-h-[220px]">
+                        </div>
+                </div>
+                
+                <div id="fc-res" class="font-bold text-center text-lg text-blue-800 bg-white p-2 rounded shadow hidden"></div>
+            </div>
         </div>
     </div>
 
@@ -582,10 +675,25 @@ HTML_PAGE = """
         </div>
     </div>
 
+    <div id="ssub-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="bg-gray-100 rounded-lg shadow-2xl p-6 max-w-5xl w-full border-4 border-teal-500 relative flex flex-col max-h-[90vh]">
+            <button onclick="closeModal('ssub-modal')" class="absolute top-4 right-4 font-bold text-2xl text-gray-700 hover:text-black focus:outline-none">&times;</button>
+            <h2 class="text-2xl font-bold text-teal-800 mb-4 tracking-wide">Planet Sub-Sub Lord Tracker Matrix</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 shrink-0">
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">From (DD-MM-YYYY HH:MM:SS)</label><input type="text" id="ss-start" class="w-full border p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"></div>
+                <div><label class="text-xs font-bold text-gray-700 mb-1 block">To (DD-MM-YYYY HH:MM:SS)</label><input type="text" id="ss-end" class="w-full border p-2 rounded bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"></div>
+            </div>
+            <button onclick="runSSubTracker()" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 rounded mb-4 shadow transition-colors shrink-0">Generate Matrix (Max 3 Days)</button>
+            <div id="ss-loader" class="hidden text-center text-teal-600 font-bold py-4 shrink-0">Calculating exact matrix minute-by-minute... This may take a few seconds.</div>
+            <div class="overflow-y-auto border border-gray-300 rounded p-4 bg-white flex-1" id="ss-body"></div>
+        </div>
+    </div>
+
     <script>
         let calcDateObj = new Date();
         let natalDateStr = "";
         let natalTimeStr = "";
+        let allClients = [];
 
         function parseDateStr(dateStr, timeStr) {
             let dmy = dateStr.split('-');
@@ -622,10 +730,56 @@ HTML_PAGE = """
                 }
             } catch(e) { statusLabel.innerText = "API Error."; }
         }
+        
+        async function saveClient() {
+            const payload = {
+                name: document.getElementById('i-name').value, dob: document.getElementById('i-dob').value, tob: document.getElementById('i-time').value,
+                city: document.getElementById('i-city').value, lat: document.getElementById('i-lat').value, lon: document.getElementById('i-lon').value,
+                tz: document.getElementById('i-tz').value, horary: document.getElementById('i-horary').value
+            };
+            const res = await fetch('/api/save_client', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+            const data = await res.json();
+            alert(data.message);
+        }
+
+        async function loadClients() {
+            const res = await fetch('/api/get_clients');
+            const data = await res.json();
+            if(data.status === 'success') {
+                allClients = data.clients;
+                filterClients();
+            }
+        }
+
+        function filterClients() {
+            const term = document.getElementById('db-search').value.toLowerCase();
+            const tbody = document.getElementById('db-body');
+            tbody.innerHTML = '';
+            allClients.forEach(c => {
+                if(c.Name.toLowerCase().includes(term) || c.City.toLowerCase().includes(term) || c.DOB.includes(term)) {
+                    tbody.innerHTML += `<tr class="border-b hover:bg-gray-50">
+                        <td class="p-2 border">${c.Name}</td><td class="p-2 border">${c.DOB}</td><td class="p-2 border">${c.Time}</td><td class="p-2 border">${c.City}</td><td class="p-2 border">${c['Saved On']}</td>
+                        <td class="p-2 border"><button onclick="selectClient('${c.ID}', '${c.Name}', '${c.DOB}', '${c.Time}')" class="bg-green-500 text-white px-2 py-1 rounded text-xs font-bold shadow">Select</button></td>
+                    </tr>`;
+                }
+            });
+        }
+
+        function selectClient(id, name, dob, time) {
+            let c = allClients.find(x => (x.ID && x.ID === id) || (!x.ID && x.Name === name && x.DOB === dob && x.Time === time));
+            if(c) {
+                document.getElementById('i-name').value = c.Name; document.getElementById('i-dob').value = c.DOB; document.getElementById('i-time').value = c.Time;
+                document.getElementById('i-city').value = c.City; document.getElementById('i-lat').value = c.Latitude; document.getElementById('i-lon').value = c.Longitude;
+                document.getElementById('i-tz').value = c.Timezone; document.getElementById('i-horary').value = c.Horary;
+                closeModal('db-modal');
+                alert(`Chart for ${c.Name} loaded successfully!`);
+            }
+        }
 
         function openDashboard() {
             document.getElementById('input-screen').classList.add('hidden');
             document.getElementById('dashboard-screen').classList.remove('hidden');
+            
             document.getElementById('d-name').innerText = document.getElementById('i-name').value;
             natalDateStr = document.getElementById('i-dob').value;
             natalTimeStr = document.getElementById('i-time').value;
@@ -639,8 +793,8 @@ HTML_PAGE = """
 
         function modeChanged() {
             let mode = document.getElementById('ctrl-mode').value;
-            if (mode === 'Transit') calcDateObj = new Date();
-            else calcDateObj = parseDateStr(natalDateStr, natalTimeStr); 
+            if (mode === 'Natal') calcDateObj = parseDateStr(natalDateStr, natalTimeStr); 
+            else calcDateObj = new Date(); 
             updateTimeDisplay();
             fetchData();
         }
@@ -726,12 +880,77 @@ HTML_PAGE = """
             if (icon) icon.innerText = isHidden ? '-' : '+';
         }
 
+        // --- DYNAMIC TARGET UI FOR FORWARD CHECK ---
+        function updateFcTargetUI() {
+            if (!window.latestAstroData) return;
+            const tt = document.querySelector('input[name="fc_ttype"]:checked').value;
+            const p_name = document.querySelector('input[name="fc_planet"]:checked').value;
+            const container = document.getElementById('fc-target-container');
+            
+            let moon_nak_idx = 0;
+            let curr_lon = 0.0;
+            
+            let natal_moon_lon = window.latestAstroData.natal_moon_lon;
+            moon_nak_idx = Math.floor(natal_moon_lon / (360.0 / 27.0));
+            curr_lon = window.latestAstroData.raw_planets[p_name] || 0.0;
+
+            let html = '';
+            if (tt === 'Sign') {
+                const signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"];
+                let target_idx = Math.floor(curr_lon / 30.0);
+                html += '<div class="grid grid-cols-2 gap-y-2 mt-2">';
+                signs.forEach((s, i) => {
+                    let chk = (i === target_idx) ? 'checked' : '';
+                    html += `<label class="flex items-center gap-2"><input type="radio" name="fc_tval" value="${i}" ${chk}> ${s}</label>`;
+                });
+                html += '</div>';
+            } else if (tt === 'Nakshatra') {
+                const lords_seq = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"];
+                const short_naks = ["Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra", "Punarvasu", "Pushya", "Ashlesha", "Magha", "Purva Pha.", "Uttara Ph.", "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha", "Mula", "Purva Ash.", "Uttara As.", "Shravana", "Dhanishta", "Shatabhis.", "Purva Bha.", "Uttara Bh.", "Revati"];
+                const tara_names = ["Janam", "Sampat", "Vipat", "Kshem", "Pratyari", "Sadhak", "Vadha", "Mitra", "Ati-Mitra"];
+                
+                let moon_lord_idx = moon_nak_idx % 9;
+                let target_idx = moon_nak_idx; 
+
+                html += '<div class="flex flex-col mt-2 text-xs w-full">';
+                for (let r = 0; r < 9; r++) {
+                    let tara_idx = (r - moon_lord_idx + 9) % 9;
+                    let t_color = "#2980b9";
+                    if ([1, 3, 5, 7, 8].includes(tara_idx)) t_color = "#27ae60"; 
+                    else if ([2, 4, 6].includes(tara_idx)) t_color = "#c0392b"; 
+                    
+                    html += `<div class="flex items-center justify-between border-b border-purple-200 py-1">`;
+                    html += `<div class="w-10 font-bold text-blue-800 text-right pr-1">${lords_seq[r].substring(0,3)}→</div>`;
+                    html += `<div class="flex flex-1 justify-around px-1">`;
+                    for (let c = 0; c < 3; c++) {
+                        let i = r + (c * 9);
+                        let chk = (i === target_idx) ? 'checked' : '';
+                        html += `<label class="flex items-center gap-1 cursor-pointer truncate"><input type="radio" name="fc_tval" value="${i}" ${chk}> <span title="${short_naks[i]}">${short_naks[i].substring(0,5)}.</span></label>`;
+                    }
+                    html += `</div>`;
+                    html += `<div class="w-20 font-bold text-left pl-1 border-l border-purple-300" style="color:${t_color}">| ${tara_names[tara_idx]}</div>`;
+                    html += `</div>`;
+                }
+                html += '</div>';
+            } else if (tt === 'Degree') {
+                let target_deg = curr_lon.toFixed(2);
+                html += `<div class="mt-4 flex items-center gap-2"><label>Target Degree (0.0 - 360.0):</label> <input type="number" step="0.1" id="fc_deg_val" value="${target_deg}" class="border border-gray-400 p-1 w-24 text-black"></div>`;
+            }
+            container.innerHTML = html;
+        }
+
         function openModal(id) {
             let pad = (n) => n.toString().padStart(2, '0');
             let today = new Date(); 
             
             if(id === 'forward-modal') {
                 document.getElementById('fc-date').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()}`;
+                document.getElementById('fc-city').value = document.getElementById('i-city').value;
+                document.getElementById('fc-disp-lat').innerText = `Latitude: ${document.getElementById('i-lat').value}`;
+                document.getElementById('fc-disp-lon').innerText = `Longitude: ${document.getElementById('i-lon').value}`;
+                document.getElementById('fc-disp-tz').innerText = `Time Zone: ${document.getElementById('i-tz').value}`;
+                document.getElementById('fc-res').classList.add('hidden');
+                updateFcTargetUI();
             }
             if(id === 'retro-modal') {
                 document.getElementById('rr-start').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()}`;
@@ -743,24 +962,38 @@ HTML_PAGE = """
                 document.getElementById('ss-end').value = `${pad(today.getDate())}-${pad(today.getMonth()+1)}-${today.getFullYear()} 23:59:59`;
                 document.getElementById('ss-body').innerHTML = '';
             }
+            if(id === 'db-modal') { setTimeout(() => document.getElementById('db-search').focus(), 100); }
             document.getElementById(id).classList.remove('hidden');
         }
+        
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
         async function runForwardCheck() {
-            document.getElementById('fc-res').innerText = "Calculating...";
+            const resDiv = document.getElementById('fc-res');
+            resDiv.innerText = "Calculating... Please wait.";
+            resDiv.classList.remove('hidden');
+            resDiv.classList.replace('text-blue-800', 'text-red-600');
+
+            let tt = document.querySelector('input[name="fc_ttype"]:checked').value;
+            let t_val;
+            if (tt === 'Degree') t_val = parseFloat(document.getElementById('fc_deg_val').value);
+            else t_val = parseInt(document.querySelector('input[name="fc_tval"]:checked').value);
+
             const payload = {
-                date: document.getElementById('fc-date').value || getFormattedCalc().d,
-                planet: document.getElementById('fc-planet').value,
-                t_type: document.getElementById('fc-type').value,
-                t_val: parseFloat(document.getElementById('fc-val').value),
+                date: document.getElementById('fc-date').value,
+                planet: document.querySelector('input[name="fc_planet"]:checked').value,
+                t_type: tt,
+                t_val: t_val,
                 tz: document.getElementById('i-tz').value,
                 aya: document.getElementById('i-aya').value
             };
+
             const res = await fetch('/api/forward_check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const d = await res.json();
-            if (d.status === 'success') document.getElementById('fc-res').innerText = d.result;
-            else document.getElementById('fc-res').innerText = "Error: " + d.message;
+            
+            resDiv.classList.replace('text-red-600', 'text-blue-800');
+            if (d.status === 'success') resDiv.innerText = d.result;
+            else resDiv.innerText = "Error: " + d.message;
         }
 
         async function runRetroReport() {
@@ -841,149 +1074,176 @@ HTML_PAGE = """
             let mode = document.getElementById('ctrl-mode').value;
             let rot = document.getElementById('ctrl-rot').value;
             
-            let printWindow = window.open('', '_blank');
-            if (!printWindow) {
-                alert("Please allow popups for this site to print the report.");
-                return;
-            }
-            
-            try {
-                let vastuP2cRows = d.vastu_p2c.map(r => {
-                    let rowData = [...r];
-                    let header = rowData[0];
-                    let cells = rowData.slice(1).map(c => {
-                        let style = "";
-                        let val = c;
-                        if(c.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; val = c.replace('*',''); }
-                        else if(c.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; val = c.replace('+',''); }
-                        return `<td style="border: 1px solid #ccc; padding: 2px; ${style}">${val}</td>`;
-                    }).join('');
-                    return `<tr><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold; background-color:#f0f0f0;">${header}</td>${cells}</tr>`;
-                }).join('');
-
-                let vastuP2pRows = d.vastu_p2p.map(r => {
-                    let color = r[4].includes('*') ? 'color:#c0392b;' : r[4].includes('+') ? 'color:#27ae60;' : '';
-                    let val = r[4].replace('*','').replace('+','');
-                    return `<tr>
-                        <td style="border: 1px solid #ccc; padding: 2px;"><b>${r[0]}</b></td>
-                        <td style="border: 1px solid #ccc; padding: 2px;">${r[1]}</td>
-                        <td style="border: 1px solid #ccc; padding: 2px;"><b>${r[2]}</b></td>
-                        <td style="border: 1px solid #ccc; padding: 2px;">${r[3]}</td>
-                        <td style="border: 1px solid #ccc; padding: 2px; ${color} font-weight:bold;">${val}</td>
-                    </tr>`;
-                }).join('');
-                
-                let dashaHtmlRows = '';
-                d.dasha.forEach(md => {
-                    dashaHtmlRows += `<tr style="background-color: #e2e8f0;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; font-weight:bold;">${md.lord}</td><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold;">${md.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold;">${md.end}</td></tr>`;
-                    md.subs.forEach(ad => {
-                        dashaHtmlRows += `<tr style="background-color: #f8fafc;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 10px; font-weight:bold;">↳ ${ad.lord}</td><td style="border: 1px solid #ccc; padding: 2px;">${ad.start}</td><td style="border: 1px solid #ccc; padding: 2px;">${ad.end}</td></tr>`;
-                        ad.subs.forEach(pd => {
-                            dashaHtmlRows += `<tr style="background-color: #ffffff;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 20px; font-size: 8px; color: #555;">• ${pd.lord}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${pd.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${pd.end}</td></tr>`;
+            let dashaHtmlRows = '';
+            d.dasha.forEach(md => {
+                if(!md.active) return;
+                dashaHtmlRows += `<tr style="background-color: #e2e8f0;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; font-weight:bold;">${md.lord} (MD)</td><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold;">${md.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold;">${md.end}</td></tr>`;
+                md.subs.forEach(ad => {
+                    if(!ad.active) return;
+                    dashaHtmlRows += `<tr style="background-color: #f8fafc;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 10px; font-weight:bold;">↳ ${ad.lord} (AD)</td><td style="border: 1px solid #ccc; padding: 2px;">${ad.start}</td><td style="border: 1px solid #ccc; padding: 2px;">${ad.end}</td></tr>`;
+                    ad.subs.forEach(pd => {
+                        if(!pd.active) return;
+                        dashaHtmlRows += `<tr style="background-color: #ffffff;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 20px; font-size: 8px; color: #555;">• ${pd.lord} (PD)</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${pd.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${pd.end}</td></tr>`;
+                        pd.subs.forEach(sd => {
+                            if(!sd.active) return;
+                            dashaHtmlRows += `<tr style="background-color: #ffffff;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 30px; font-size: 8px; color: #555;">- ${sd.lord} (SD)</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${sd.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${sd.end}</td></tr>`;
+                            sd.subs.forEach(prd => {
+                                if(!prd.active) return;
+                                dashaHtmlRows += `<tr style="background-color: #ffffff;"><td style="border: 1px solid #ccc; padding: 2px; text-align: left; padding-left: 40px; font-size: 8px; color: #555;">▪ ${prd.lord} (PRD)</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${prd.start}</td><td style="border: 1px solid #ccc; padding: 2px; font-size: 8px; color: #555;">${prd.end}</td></tr>`;
+                            });
                         });
                     });
                 });
+            });
 
-                let html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <title>${name} - Master Report</title>
-                    <style>
-                        @page { margin: 10mm; size: A4; }
-                        body { font-family: 'Verdana', sans-serif; font-size: 8px; color: #000; background: #fff; line-height: 1.2; }
-                        .header { text-align: center; border-bottom: 2px solid #0d2538; padding-bottom: 5px; margin-bottom: 10px; }
-                        .header h1 { margin: 0; font-size: 16px; color: #0d2538; text-transform: uppercase; }
-                        .header p { margin: 3px 0; font-size: 10px; }
-                        .grid-charts { display: flex; justify-content: space-between; margin-bottom: 15px; }
-                        .chart-box { border: 1px solid #0d2538; width: 32%; text-align: center; padding: 2px; page-break-inside: avoid; border-radius: 4px; }
-                        .chart-box h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; }
-                        .chart-box svg { width: 100%; height: auto; max-width: 250px; margin: auto; display: block; }
-                        .section { margin-bottom: 15px; page-break-inside: avoid; border: 1px solid #0d2538; border-radius: 4px; }
-                        .section h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; text-align: center;}
-                        table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 2px; }
-                        th { background-color: #0d2538; color: white; font-weight: bold; padding: 2px; border: 1px solid #ccc; }
-                        td { border: 1px solid #ccc; padding: 2px; }
-                        tr:nth-child(even) td { background-color: #f9f9f9; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">
-                        <h1>KP ASTROLOGY MASTER REPORT DETAILS</h1>
-                        <p><b>Name:</b> ${name} | <b>DOB:</b> ${dob} | <b>Time:</b> ${time} | <b>Place:</b> ${city}</p>
-                        <p><b>Mode:</b> ${mode} | <b>Rotated to House:</b> ${rot}</p>
+            let vastuP2cRows = d.vastu_p2c.map(r => {
+                let rowData = [...r];
+                let header = rowData[0];
+                let cells = rowData.slice(1).map(c => {
+                    let style = ""; let val = c;
+                    if(c.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; val = c.replace('*',''); }
+                    else if(c.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; val = c.replace('+',''); }
+                    return `<td style="border: 1px solid #ccc; padding: 2px; ${style}">${val}</td>`;
+                }).join('');
+                return `<tr><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold; background-color:#f0f0f0;">${header}</td>${cells}</tr>`;
+            }).join('');
+
+            let vastuP2pRows = d.vastu_p2p.map(r => {
+                let color = r[4].includes('*') ? 'color:#c0392b;' : r[4].includes('+') ? 'color:#27ae60;' : '';
+                let val = r[4].replace('*','').replace('+','');
+                return `<tr>
+                    <td style="border: 1px solid #ccc; padding: 2px;"><b>${r[0]}</b></td>
+                    <td style="border: 1px solid #ccc; padding: 2px;">${r[1]}</td>
+                    <td style="border: 1px solid #ccc; padding: 2px;"><b>${r[2]}</b></td>
+                    <td style="border: 1px solid #ccc; padding: 2px;">${r[3]}</td>
+                    <td style="border: 1px solid #ccc; padding: 2px; ${color} font-weight:bold;">${val}</td>
+                </tr>`;
+            }).join('');
+
+            let vastuH2hRows = d.vastu_h2h.map(r => {
+                let cells = r.slice(1).map(c => {
+                    let style = ""; let val = c;
+                    if(c === "-") { style = "background-color:#f2f3f4; color:#bdc3c7;"; }
+                    else if(c.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; val = c.replace('*',''); }
+                    else if(c.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; val = c.replace('+',''); }
+                    return `<td style="border: 1px solid #ccc; padding: 2px; ${style}">${val}</td>`;
+                }).join('');
+                return `<tr><td style="border: 1px solid #ccc; padding: 2px; font-weight:bold; background-color:#f0f0f0;">House ${r[0]}</td>${cells}</tr>`;
+            }).join('');
+
+            let html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>${name} - Master Report</title>
+                <style>
+                    @page { margin: 10mm; size: A4; }
+                    body { font-family: 'Verdana', sans-serif; font-size: 8px; color: #000; background: #fff; line-height: 1.2; padding: 10px; }
+                    .header { text-align: center; border-bottom: 2px solid #0d2538; padding-bottom: 5px; margin-bottom: 10px; }
+                    .header h1 { margin: 0; font-size: 16px; color: #0d2538; text-transform: uppercase; }
+                    .header p { margin: 3px 0; font-size: 10px; }
+                    .grid-charts { display: flex; justify-content: space-between; margin-bottom: 15px; }
+                    .chart-box { border: 1px solid #0d2538; width: 32%; text-align: center; padding: 2px; page-break-inside: avoid; border-radius: 4px; }
+                    .chart-box h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; }
+                    .chart-box svg { width: 100%; height: auto; max-width: 220px; margin: auto; display: block; }
+                    .section { margin-bottom: 15px; page-break-inside: avoid; border: 1px solid #0d2538; border-radius: 4px; }
+                    .section h2 { margin: 0; background: #0d2538; color: #fff; font-size: 10px; padding: 3px; text-transform: uppercase; text-align: center;}
+                    table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 2px; }
+                    th { background-color: #0d2538; color: white; font-weight: bold; padding: 2px; border: 1px solid #ccc; }
+                    td { border: 1px solid #ccc; padding: 2px; }
+                    tr:nth-child(even) td { background-color: #f9f9f9; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>KP ASTROLOGY MASTER REPORT DETAILS</h1>
+                    <p><b>Name:</b> ${name} | <b>DOB:</b> ${dob} | <b>Time:</b> ${time} | <b>Place:</b> ${city}</p>
+                    <p><b>Mode:</b> ${d.print_title} | <b>Rotated to House:</b> ${rot}</p>
+                </div>
+                
+                <div class="grid-charts">
+                    <div class="chart-box"><h2>Lagna Chart</h2>${d.svg_lagna}</div>
+                    <div class="chart-box"><h2>Bhava Chalit</h2>${d.svg_chalit}</div>
+                    <div class="chart-box"><h2>Lal Kitab (${d.lk_range})</h2>${d.svg_lk}</div>
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; gap: 10px;">
+                    <div class="section" style="width: 50%;">
+                        <h2>Planetary Positions</h2>
+                        <table>
+                            <tr><th>Planet</th><th>Sign</th><th>Degree</th><th>Nakshatra</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr>
+                            ${d.planets.map(r => `<tr><td><b>${r[0]}</b></td><td><b style="color:#0d2538;">${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join('')}
+                        </table>
                     </div>
-                    
-                    <div class="grid-charts">
-                        <div class="chart-box"><h2>Lagna Chart</h2>${d.svg_lagna}</div>
-                        <div class="chart-box"><h2>Bhava Chalit</h2>${d.svg_chalit}</div>
-                        <div class="chart-box"><h2>Lal Kitab (${d.lk_range})</h2>${d.svg_lk}</div>
+                    <div class="section" style="width: 50%;">
+                        <h2>Cusp Positions</h2>
+                        <table>
+                            <tr><th>House</th><th>Sign</th><th>Degree</th><th>Nakshatra</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr>
+                            ${d.cusps.map(r => `<tr><td><b>${r[0]}</b></td><td><b style="color:#0d2538;">${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join('')}
+                        </table>
                     </div>
-                    
-                    <div style="display: flex; justify-content: space-between; gap: 10px;">
-                        <div class="section" style="width: 50%;">
-                            <h2>Planetary Positions</h2>
-                            <table>
-                                <tr><th>Planet</th><th>Sign</th><th>Degree</th><th>Nakshatra</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr>
-                                ${d.planets.map(r => `<tr><td><b>${r[0]}</b></td><td><b style="color:#0d2538;">${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join('')}
-                            </table>
-                        </div>
-                        <div class="section" style="width: 50%;">
-                            <h2>Cusp Positions</h2>
-                            <table>
-                                <tr><th>House</th><th>Sign</th><th>Degree</th><th>Nakshatra</th><th>Star L</th><th>Sub L</th><th>S-Sub</th></tr>
-                                ${d.cusps.map(r => `<tr><td><b>${r[0]}</b></td><td><b style="color:#0d2538;">${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td><td>${r[6]}</td></tr>`).join('')}
-                            </table>
-                        </div>
-                    </div>
-                    
-                    <div class="section">
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; gap: 10px;">
+                    <div class="section" style="width: 50%;">
                         <h2>Nadi Significators</h2>
                         <table>
                             <tr><th>PLANET</th><th>P-SIGNIFS</th><th>STAR LORD</th><th>ST-SIGNIFS</th><th>SUB LORD</th><th>SB-SIGNIFS</th></tr>
                             ${d.nadi.map(r => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td><b style="color:#0d2538;">${r[2]}</b></td><td>${r[3]}</td><td><b style="color:#0d2538;">${r[4]}</b></td><td>${r[5]}</td></tr>`).join('')}
                         </table>
                     </div>
-                    
-                    <div class="section">
-                        <h2>Vimshottari Dasha (3 Levels)</h2>
+                    <div class="section" style="width: 50%;">
+                        <h2>Current Active Dasha (5 Levels)</h2>
                         <div style="padding: 3px; font-weight:bold; color: #c0392b;">${d.dasha_bal}</div>
                         <table>
                             <tr><th>Dasha Lord</th><th>Start Date</th><th>End Date</th></tr>
                             ${dashaHtmlRows}
                         </table>
                     </div>
+                </div>
 
-                    <div class="section" style="border-color: #1e8449;">
-                        <h2 style="background-color: #1e8449;">Astro Vastu</h2>
-                        <div style="padding: 5px;">
-                            <h3 style="margin: 0 0 5px 0; font-size: 10px; color: #0d2538;">Planet to House Aspects</h3>
-                            <table style="table-layout: fixed; word-wrap: break-word;">
-                                <tr><th style="background-color: #eaecee; color:#0d2538;">Dir</th>${d.vastu_dirs.map(dir => `<th style="background-color: #82e0aa; color:black;">${dir}</th>`).join('')}</tr>
-                                ${vastuP2cRows}
-                            </table>
-                            
-                            <h3 style="margin: 10px 0 5px 0; font-size: 10px; color: #0d2538;">Planet to Planet Aspects</h3>
-                            <table>
-                                <tr><th>FROM</th><th style="background-color:#eaecee; color:#000;">DIR 1</th><th>TO</th><th style="background-color:#eaecee; color:#000;">DIR 2</th><th>ASP</th></tr>
-                                ${vastuP2pRows}
-                            </table>
-                        </div>
+                <div class="section" style="border-color: #1e8449;">
+                    <h2 style="background-color: #1e8449;">Astro Vastu & Medical Aspects</h2>
+                    <div style="padding: 5px;">
+                        <h3 style="margin: 0 0 5px 0; font-size: 10px; color: #0d2538;">Planet to House Aspects</h3>
+                        <table style="table-layout: fixed; word-wrap: break-word;">
+                            <tr><th style="background-color: #eaecee; color:#0d2538;">Dir</th>${d.vastu_dirs.map(dir => `<th style="background-color: #82e0aa; color:black;">${dir}</th>`).join('')}</tr>
+                            ${vastuP2cRows}
+                        </table>
+                        
+                        <h3 style="margin: 10px 0 5px 0; font-size: 10px; color: #0d2538;">Planet to Planet Aspects</h3>
+                        <table>
+                            <tr><th>FROM</th><th style="background-color:#eaecee; color:#000;">DIR 1</th><th>TO</th><th style="background-color:#eaecee; color:#000;">DIR 2</th><th>ASP</th></tr>
+                            ${vastuP2pRows}
+                        </table>
+                        
+                        <h3 style="margin: 10px 0 5px 0; font-size: 10px; color: #0d2538;">House to House Aspects (Medical)</h3>
+                        <table style="table-layout: fixed; word-wrap: break-word;">
+                            <tr><th style="background-color: #eaecee; color:#0d2538;">House</th>${[1,2,3,4,5,6,7,8,9,10,11,12].map(i => `<th style="background-color: #82e0aa; color:black;">${i}</th>`).join('')}</tr>
+                            ${vastuH2hRows}
+                        </table>
                     </div>
+                </div>
 
-                </body>
-                </html>
-                `;
+            </body>
+            </html>
+            `;
 
-                printWindow.document.write(html);
-                printWindow.document.close();
-                printWindow.focus();
-                setTimeout(() => { printWindow.print(); printWindow.close(); }, 500);
-            } catch (e) {
-                printWindow.close();
-                alert("Error generating report: " + e.message);
-            }
+            let printIframe = document.createElement('iframe');
+            printIframe.style.position = 'absolute';
+            printIframe.style.top = '-10000px';
+            document.body.appendChild(printIframe);
+
+            printIframe.contentDocument.open();
+            printIframe.contentDocument.write(html);
+            printIframe.contentDocument.close();
+
+            setTimeout(() => {
+                printIframe.contentWindow.focus();
+                printIframe.contentWindow.print();
+                setTimeout(() => { document.body.removeChild(printIframe); }, 2000);
+            }, 500);
         }
 
         async function fetchData() {
@@ -993,72 +1253,39 @@ HTML_PAGE = """
             let calcFmt = getFormattedCalc();
             let modeStr = document.getElementById('ctrl-mode').value;
             let rotStr = document.getElementById('ctrl-rot').value;
-
-            document.getElementById('title-lagna').innerText = `Lagna Chart (${modeStr} - House ${rotStr})`;
-            document.getElementById('title-chalit').innerText = `Bhava Chalit (${modeStr} - House ${rotStr})`;
+            let horaryNum = document.getElementById('i-horary').value;
+            
+            let titlePrefix = modeStr === 'Horary' ? `Horary #${horaryNum}` : modeStr;
+            document.getElementById('title-lagna').innerText = `Lagna Chart (${titlePrefix} - House ${rotStr})`;
+            document.getElementById('title-chalit').innerText = `Bhava Chalit (${titlePrefix} - House ${rotStr})`;
 
             const payload = {
-                natal_date: natalDateStr, natal_time: natalTimeStr,
-                calc_date: calcFmt.d, calc_time: calcFmt.t,
+                natal_date: natalDateStr, natal_time: natalTimeStr, calc_date: calcFmt.d, calc_time: calcFmt.t,
                 lat: document.getElementById('i-lat').value, lon: document.getElementById('i-lon').value,
                 tz: document.getElementById('i-tz').value, mode: modeStr, rot_house: rotStr,
-                horary: document.getElementById('i-horary').value,
-                aya: document.getElementById('i-aya').value, rahu: document.getElementById('i-rahu').value,
-                age: document.getElementById('d-age').value
+                horary: horaryNum, aya: document.getElementById('i-aya').value, 
+                rahu: document.getElementById('i-rahu').value, age: document.getElementById('d-age').value
             };
 
             try {
                 const res = await fetch('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const d = await res.json();
                 if (d.status !== 'success') { alert(d.message); return; }
-
+                
+                d.print_title = titlePrefix; 
                 window.latestAstroData = d;
-
+                
                 document.getElementById('svg-lagna').innerHTML = d.svg_lagna;
                 document.getElementById('svg-chalit').innerHTML = d.svg_chalit;
                 document.getElementById('svg-lk').innerHTML = d.svg_lk;
-                
                 document.getElementById('title-lk').innerText = `Lal Kitab Varshphal (${d.lk_range})`;
 
-                const buildTr = (arr, colorCol=null) => arr.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'}">${r.map((c, j) => `<td class="${j===colorCol?'font-bold text-blue-700':''}">${c}</td>`).join('')}</tr>`).join('');
+                document.getElementById('tb-planets').innerHTML = d.planets.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} border-b"><td class="p-2 font-bold">${r[0]}</td><td class="p-2 text-blue-800 font-bold">${r[1]}</td><td class="p-2">${r[2]}</td><td class="p-2">${r[3]}</td><td class="p-2">${r[4]}</td><td class="p-2">${r[5]}</td><td class="p-2">${r[6]}</td></tr>`).join('');
+                document.getElementById('tb-cusps').innerHTML = d.cusps.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} border-b"><td class="p-2 font-bold">${r[0]}</td><td class="p-2 text-green-800 font-bold">${r[1]}</td><td class="p-2">${r[2]}</td><td class="p-2">${r[3]}</td><td class="p-2">${r[4]}</td><td class="p-2">${r[5]}</td><td class="p-2">${r[6]}</td></tr>`).join('');
+                document.getElementById('tb-nadi').innerHTML = d.nadi.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-blue-50'} border-b"><td class="p-3 font-bold">${r[0]}</td><td class="p-3">${r[1]}</td><td class="p-3 font-bold text-blue-800">${r[2]}</td><td class="p-3">${r[3]}</td><td class="p-3 font-bold text-blue-800">${r[4]}</td><td class="p-3">${r[5]}</td></tr>`).join('');
                 
-                document.getElementById('tb-planets').innerHTML = d.planets.map((r,i) => `
-                    <tr class="${i%2==0?'bg-white':'bg-gray-50'} text-gray-800 border-b border-gray-200 hover:bg-blue-50 transition-colors">
-                        <td class="border border-gray-200 p-2 font-bold">${r[0]}</td>
-                        <td class="border border-gray-200 p-2 text-blue-800 font-bold">${r[1]}</td>
-                        <td class="border border-gray-200 p-2">${r[2]}</td>
-                        <td class="border border-gray-200 p-2">${r[3]}</td>
-                        <td class="border border-gray-200 p-2">${r[4]}</td>
-                        <td class="border border-gray-200 p-2">${r[5]}</td>
-                        <td class="border border-gray-200 p-2">${r[6]}</td>
-                    </tr>
-                `).join('');
-
-                document.getElementById('tb-cusps').innerHTML = d.cusps.map((r,i) => `
-                    <tr class="${i%2==0?'bg-white':'bg-gray-50'} text-gray-800 border-b border-gray-200 hover:bg-green-50 transition-colors">
-                        <td class="border border-gray-200 p-2 font-bold">${r[0]}</td>
-                        <td class="border border-gray-200 p-2 text-green-800 font-bold">${r[1]}</td>
-                        <td class="border border-gray-200 p-2">${r[2]}</td>
-                        <td class="border border-gray-200 p-2">${r[3]}</td>
-                        <td class="border border-gray-200 p-2">${r[4]}</td>
-                        <td class="border border-gray-200 p-2">${r[5]}</td>
-                        <td class="border border-gray-200 p-2">${r[6]}</td>
-                    </tr>
-                `).join('');
-
-                document.getElementById('tb-nadi').innerHTML = d.nadi.map((r,i) => `
-                    <tr class="${i%2==0?'bg-white':'bg-blue-50'} border-b border-gray-200 text-gray-800 hover:bg-gray-100 transition-colors">
-                        <td class="border border-gray-200 p-3 font-bold">${r[0]}</td>
-                        <td class="border border-gray-200 p-3">${r[1]}</td>
-                        <td class="border border-gray-200 p-3 font-bold text-blue-800">${r[2]}</td>
-                        <td class="border border-gray-200 p-3">${r[3]}</td>
-                        <td class="border border-gray-200 p-3 font-bold text-blue-800">${r[4]}</td>
-                        <td class="border border-gray-200 p-3">${r[5]}</td>
-                    </tr>
-                `).join('');
-                
-                document.getElementById('tb-p2p').innerHTML = d.hits_p2p.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold border-b border-gray-200 hover:bg-gray-100"><td class="border border-gray-200 p-2">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="border border-gray-200 p-2">${r[4]}</td></tr>`).join('');
-                document.getElementById('tb-p2h').innerHTML = d.hits_p2h.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold border-b border-gray-200 hover:bg-gray-100"><td class="border border-gray-200 p-2">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="border border-gray-200 p-2">${r[4]}</td></tr>`).join('');
+                document.getElementById('tb-p2p').innerHTML = d.hits_p2p.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold border-b"><td class="p-2">${r[0]}</td><td class="p-2">${r[1]}</td><td class="p-2">${r[2]}</td><td class="p-2">${r[3]}</td><td class="p-2">${r[4]}</td></tr>`).join('');
+                document.getElementById('tb-p2h').innerHTML = d.hits_p2h.map((r,i) => `<tr class="${i%2==0?'bg-white':'bg-gray-50'} ${r[4]==='Positive'?'text-green-700':r[4]==='Negative'?'text-red-700':''} font-bold border-b"><td class="p-2">${r[0]}</td><td class="p-2">${r[1]}</td><td class="p-2">${r[2]}</td><td class="p-2">${r[3]}</td><td class="p-2">${r[4]}</td></tr>`).join('');
 
                 let thHtml = '<tr><th class="bg-[#1e3a8a] text-white p-2 border border-blue-800">Direction</th>';
                 for(let i=1; i<=12; i++) thHtml += `<th class="bg-[#22c55e] text-white p-2 border border-green-700">${d.vastu_dirs[i-1]}</th>`;
@@ -1068,12 +1295,12 @@ HTML_PAGE = """
                 let tbHtml = '';
                 for(let r of d.vastu_p2c) {
                     let rowData = [...r];
-                    tbHtml += `<tr class="border-b border-gray-200 hover:bg-gray-50"><td class="font-bold bg-gray-100 p-2 border border-gray-200 text-gray-800">${rowData[0]}</td>`;
+                    tbHtml += `<tr class="border-b hover:bg-gray-50"><td class="font-bold bg-gray-100 p-2 border">${rowData[0]}</td>`;
                     for(let cell of rowData.slice(1)) {
                         let style = "";
                         if(cell.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; cell=cell.replace('*','');}
                         else if(cell.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; cell=cell.replace('+','');}
-                        tbHtml += `<td style="${style}" class="border border-gray-200 p-2">${cell}</td>`;
+                        tbHtml += `<td style="${style}" class="border p-2">${cell}</td>`;
                     }
                     tbHtml += `</tr>`;
                 }
@@ -1082,64 +1309,190 @@ HTML_PAGE = """
                 document.getElementById('tb-vastu-p2p').innerHTML = d.vastu_p2p.map((r,i) => {
                     let color = r[4].includes('*') ? 'text-red-600 bg-red-50' : r[4].includes('+') ? 'text-green-600 bg-green-50' : '';
                     let val = r[4].replace('*','').replace('+','');
-                    return `<tr class="${i%2==0?'bg-white':'bg-gray-50'} border-b border-gray-200 text-gray-800 hover:bg-gray-100"><td class="border border-gray-200 p-2 font-bold">${r[0]}</td><td class="border border-gray-200 p-2">${r[1]}</td><td class="border border-gray-200 p-2 font-bold">${r[2]}</td><td class="border border-gray-200 p-2">${r[3]}</td><td class="${color} border border-gray-200 p-2 font-bold">${val}</td></tr>`;
+                    return `<tr class="${i%2==0?'bg-white':'bg-gray-50'} border-b hover:bg-gray-100"><td class="border p-2 font-bold">${r[0]}</td><td class="border p-2">${r[1]}</td><td class="border p-2 font-bold">${r[2]}</td><td class="border p-2">${r[3]}</td><td class="${color} border p-2 font-bold">${val}</td></tr>`;
                 }).join('');
 
-                // Dasha Tree Generation (5 Levels)
+                let thH2hHtml = '<tr><th class="bg-[#1e3a8a] text-white p-2 border">House</th>';
+                for(let i=1; i<=12; i++) thH2hHtml += `<th class="bg-[#22c55e] text-white p-2 border">${i}</th>`;
+                thH2hHtml += '</tr>';
+                document.getElementById('th-vastu-h2h').innerHTML = thH2hHtml;
+                
+                document.getElementById('tb-vastu-h2h').innerHTML = d.vastu_h2h.map((r,i) => {
+                    let rowHtml = `<tr class="border-b hover:bg-gray-50"><td class="font-bold bg-gray-100 p-2 border">House ${r[0]}</td>`;
+                    for(let cell of r.slice(1)) {
+                        let style = ""; let val = cell;
+                        if(cell === "-") { style = "background-color:#f3f4f6; color:#9ca3af;"; } 
+                        else if(cell.includes('*')) { style = "background-color:#fadbd8; color:#c0392b; font-weight:bold;"; val = cell.replace('*',''); } 
+                        else if(cell.includes('+')) { style = "background-color:#d5f5e3; color:#27ae60; font-weight:bold;"; val = cell.replace('+',''); }
+                        rowHtml += `<td style="${style}" class="border p-2">${val}</td>`;
+                    }
+                    rowHtml += `</tr>`;
+                    return rowHtml;
+                }).join('');
+
                 document.getElementById('dasha-bal').innerText = d.dasha_bal;
                 let dashaHtml = '';
                 d.dasha.forEach((md, i) => {
-                    let mdBg = md.active ? 'bg-green-200' : 'bg-blue-50 hover:bg-blue-100';
-                    let mdIcon = md.active ? '-' : '+';
+                    let isMdActive = md.active;
+                    let mdBg = isMdActive ? 'bg-green-200' : 'bg-blue-50 hover:bg-blue-100';
+                    
                     dashaHtml += `
                         <tr class="${mdBg} border-b border-gray-300 cursor-pointer" onclick="toggleDasha('ad-${i}')">
-                            <td class="p-2 text-left font-bold text-blue-900 border border-gray-300"><span id="icon-ad-${i}" class="mr-2 border border-blue-900 px-1 text-xs">${mdIcon}</span>${md.lord}</td>
+                            <td class="p-2 text-left font-bold text-blue-900 border border-gray-300">
+                                <span id="icon-ad-${i}" class="mr-2 border border-blue-900 px-1 text-xs">${isMdActive ? '-' : '+'}</span>
+                                ${md.lord}
+                            </td>
                             <td class="p-2 font-bold border border-gray-300">${md.start}</td>
                             <td class="p-2 font-bold border border-gray-300">${md.end}</td>
                         </tr>`;
-                    md.subs.forEach((ad, j) => {
-                        let adBg = ad.active ? 'bg-green-100' : 'bg-white hover:bg-gray-50';
-                        let adHidden = md.active ? '' : 'hidden';
-                        let adIcon = ad.active ? '-' : '+';
-                        dashaHtml += `
-                            <tr class="ad-${i} ${adHidden} ${adBg} border-b border-gray-200 cursor-pointer" onclick="toggleDasha('pd-${i}-${j}')">
-                                <td class="p-2 text-left pl-8 font-semibold text-gray-800 border border-gray-200"><span id="icon-pd-${i}-${j}" class="mr-2 border border-gray-500 px-1 text-xs">${adIcon}</span>${ad.lord}</td>
-                                <td class="p-2 border border-gray-200">${ad.start}</td>
-                                <td class="p-2 border border-gray-200">${ad.end}</td>
-                            </tr>`;
-                        ad.subs.forEach((pd, k) => {
-                            let pdBg = pd.active ? 'bg-green-200 font-bold text-black' : 'bg-gray-50 hover:bg-gray-100 text-gray-600';
-                            let pdHidden = ad.active ? '' : 'hidden';
-                            let pdIcon = pd.active ? '-' : '+';
+                    
+                    if (isMdActive) {
+                        md.subs.forEach((ad, j) => {
+                            let isAdActive = ad.active;
+                            let adBg = isAdActive ? 'bg-green-100' : 'bg-white hover:bg-gray-50';
+                            
                             dashaHtml += `
-                                <tr class="pd-${i}-${j} ${pdHidden} ${pdBg} border-b border-gray-100 text-xs cursor-pointer" onclick="toggleDasha('sd-${i}-${j}-${k}')">
-                                    <td class="p-2 text-left pl-12 border border-gray-100"><span id="icon-sd-${i}-${j}-${k}" class="mr-2 border border-gray-400 px-1 text-xs">${pdIcon}</span>${pd.lord}</td>
-                                    <td class="p-2 border border-gray-100">${pd.start}</td>
-                                    <td class="p-2 border border-gray-100">${pd.end}</td>
+                                <tr class="ad-${i} ${adBg} border-b border-gray-200 cursor-pointer" onclick="toggleDasha('pd-${i}-${j}')">
+                                    <td class="p-2 text-left pl-8 font-semibold text-gray-800 border border-gray-200">
+                                        <span id="icon-pd-${i}-${j}" class="mr-2 border border-gray-500 px-1 text-xs">${isAdActive ? '-' : '+'}</span>
+                                        ↳ ${ad.lord}
+                                    </td>
+                                    <td class="p-2 border border-gray-200">${ad.start}</td>
+                                    <td class="p-2 border border-gray-200">${ad.end}</td>
                                 </tr>`;
-                            pd.subs.forEach((sd, l) => {
-                                let sdBg = sd.active ? 'bg-green-100 font-bold text-black' : 'bg-white hover:bg-gray-50 text-gray-500';
-                                let sdHidden = pd.active ? '' : 'hidden';
-                                let sdIcon = sd.active ? '-' : '+';
+                                
+                            if (isAdActive) {
+                                ad.subs.forEach((pd, k) => {
+                                    let isPdActive = pd.active;
+                                    let pdBg = isPdActive ? 'bg-green-50 font-bold text-black' : 'bg-gray-50 hover:bg-gray-100 text-gray-600';
+                                    let pdIcon = isPdActive ? '-' : '+';
+                                    
+                                    dashaHtml += `
+                                        <tr class="pd-${i}-${j} ${pdBg} border-b border-gray-100 text-xs cursor-pointer" onclick="toggleDasha('sd-${i}-${j}-${k}')">
+                                            <td class="p-2 text-left pl-16 border border-gray-100">
+                                                <span id="icon-sd-${i}-${j}-${k}" class="mr-2 border border-gray-400 px-1 text-[10px]">${pdIcon}</span>
+                                                • ${pd.lord}
+                                            </td>
+                                            <td class="p-2 border border-gray-100">${pd.start}</td>
+                                            <td class="p-2 border border-gray-100">${pd.end}</td>
+                                        </tr>`;
+                                        
+                                    if(isPdActive) {
+                                        pd.subs.forEach((sd, l) => {
+                                            let isSdActive = sd.active;
+                                            let sdBg = isSdActive ? 'bg-green-100 font-bold text-black' : 'bg-white hover:bg-gray-50 text-gray-500';
+                                            let sdIcon = isSdActive ? '-' : '+';
+                                            dashaHtml += `
+                                            <tr class="sd-${i}-${j}-${k} ${sdBg} border-b border-gray-100 text-[11px] cursor-pointer" onclick="toggleDasha('prd-${i}-${j}-${k}-${l}')">
+                                                <td class="p-2 text-left pl-24 border border-gray-100">
+                                                    <span id="icon-prd-${i}-${j}-${k}-${l}" class="mr-2 border border-gray-300 px-1 text-[10px]">${sdIcon}</span>
+                                                    - ${sd.lord}
+                                                </td>
+                                                <td class="p-2 border border-gray-100">${sd.start}</td>
+                                                <td class="p-2 border border-gray-100">${sd.end}</td>
+                                            </tr>`;
+                                            
+                                            if(isSdActive) {
+                                                sd.subs.forEach((prd, m) => {
+                                                    let prdBg = prd.active ? 'bg-green-200 font-bold text-black' : 'bg-gray-50 text-gray-400';
+                                                    dashaHtml += `
+                                                    <tr class="prd-${i}-${j}-${k}-${l} ${prdBg} border-b border-gray-50 text-[10px]">
+                                                        <td class="p-2 text-left pl-32 border border-gray-50">▪ ${prd.lord}</td>
+                                                        <td class="p-2 border border-gray-50">${prd.start}</td>
+                                                        <td class="p-2 border border-gray-50">${prd.end}</td>
+                                                    </tr>`;
+                                                });
+                                            } else {
+                                                sd.subs.forEach((prd, m) => {
+                                                    dashaHtml += `
+                                                    <tr class="prd-${i}-${j}-${k}-${l} hidden bg-gray-50 text-gray-400 border-b border-gray-50 text-[10px]">
+                                                        <td class="p-2 text-left pl-32 border border-gray-50">▪ ${prd.lord}</td>
+                                                        <td class="p-2 border border-gray-50">${prd.start}</td>
+                                                        <td class="p-2 border border-gray-50">${prd.end}</td>
+                                                    </tr>`;
+                                                });
+                                            }
+                                        });
+                                    } else {
+                                        pd.subs.forEach((sd, l) => {
+                                            dashaHtml += `
+                                            <tr class="sd-${i}-${j}-${k} hidden bg-white hover:bg-gray-50 text-gray-500 border-b border-gray-100 text-[11px] cursor-pointer" onclick="toggleDasha('prd-${i}-${j}-${k}-${l}')">
+                                                <td class="p-2 text-left pl-24 border border-gray-100"><span id="icon-prd-${i}-${j}-${k}-${l}" class="mr-2 border border-gray-300 px-1 text-[10px]">+</span>- ${sd.lord}</td>
+                                                <td class="p-2 border border-gray-100">${sd.start}</td>
+                                                <td class="p-2 border border-gray-100">${sd.end}</td>
+                                            </tr>`;
+                                            sd.subs.forEach((prd, m) => {
+                                                dashaHtml += `
+                                                <tr class="prd-${i}-${j}-${k}-${l} hidden bg-gray-50 text-gray-400 border-b border-gray-50 text-[10px]">
+                                                    <td class="p-2 text-left pl-32 border border-gray-50">▪ ${prd.lord}</td>
+                                                    <td class="p-2 border border-gray-50">${prd.start}</td>
+                                                    <td class="p-2 border border-gray-50">${prd.end}</td>
+                                                </tr>`;
+                                            });
+                                        });
+                                    }
+                                });
+                            } else {
+                                ad.subs.forEach((pd, k) => {
+                                    dashaHtml += `
+                                        <tr class="pd-${i}-${j} hidden bg-gray-50 text-gray-600 border-b border-gray-100 text-xs cursor-pointer" onclick="toggleDasha('sd-${i}-${j}-${k}')">
+                                            <td class="p-2 text-left pl-16 border border-gray-100"><span id="icon-sd-${i}-${j}-${k}" class="mr-2 border border-gray-400 px-1 text-[10px]">+</span>• ${pd.lord}</td>
+                                            <td class="p-2 border border-gray-100">${pd.start}</td>
+                                            <td class="p-2 border border-gray-100">${pd.end}</td>
+                                        </tr>`;
+                                    pd.subs.forEach((sd, l) => {
+                                        dashaHtml += `
+                                        <tr class="sd-${i}-${j}-${k} hidden bg-white hover:bg-gray-50 text-gray-500 border-b border-gray-100 text-[11px] cursor-pointer" onclick="toggleDasha('prd-${i}-${j}-${k}-${l}')">
+                                            <td class="p-2 text-left pl-24 border border-gray-100"><span id="icon-prd-${i}-${j}-${k}-${l}" class="mr-2 border border-gray-300 px-1 text-[10px]">+</span>- ${sd.lord}</td>
+                                            <td class="p-2 border border-gray-100">${sd.start}</td>
+                                            <td class="p-2 border border-gray-100">${sd.end}</td>
+                                        </tr>`;
+                                        sd.subs.forEach((prd, m) => {
+                                            dashaHtml += `
+                                            <tr class="prd-${i}-${j}-${k}-${l} hidden bg-gray-50 text-gray-400 border-b border-gray-50 text-[10px]">
+                                                <td class="p-2 text-left pl-32 border border-gray-50">▪ ${prd.lord}</td>
+                                                <td class="p-2 border border-gray-50">${prd.start}</td>
+                                                <td class="p-2 border border-gray-50">${prd.end}</td>
+                                            </tr>`;
+                                        });
+                                    });
+                                });
+                            }
+                        });
+                    } else {
+                        md.subs.forEach((ad, j) => {
+                            dashaHtml += `
+                                <tr class="ad-${i} hidden bg-white hover:bg-gray-50 border-b border-gray-200 cursor-pointer" onclick="toggleDasha('pd-${i}-${j}')">
+                                    <td class="p-2 text-left pl-8 font-semibold text-gray-800 border border-gray-200"><span id="icon-pd-${i}-${j}" class="mr-2 border border-gray-500 px-1 text-xs">+</span>↳ ${ad.lord}</td>
+                                    <td class="p-2 border border-gray-200">${ad.start}</td>
+                                    <td class="p-2 border border-gray-200">${ad.end}</td>
+                                </tr>`;
+                            ad.subs.forEach((pd, k) => {
                                 dashaHtml += `
-                                    <tr class="sd-${i}-${j}-${k} ${sdHidden} ${sdBg} border-b border-gray-100 text-[11px] cursor-pointer" onclick="toggleDasha('prd-${i}-${j}-${k}-${l}')">
-                                        <td class="p-2 text-left pl-16 border border-gray-100"><span id="icon-prd-${i}-${j}-${k}-${l}" class="mr-2 border border-gray-300 px-1 text-[10px]">${sdIcon}</span>${sd.lord}</td>
+                                    <tr class="pd-${i}-${j} hidden bg-gray-50 text-gray-600 border-b border-gray-100 text-xs cursor-pointer" onclick="toggleDasha('sd-${i}-${j}-${k}')">
+                                        <td class="p-2 text-left pl-16 border border-gray-100"><span id="icon-sd-${i}-${j}-${k}" class="mr-2 border border-gray-400 px-1 text-[10px]">+</span>• ${pd.lord}</td>
+                                        <td class="p-2 border border-gray-100">${pd.start}</td>
+                                        <td class="p-2 border border-gray-100">${pd.end}</td>
+                                    </tr>`;
+                                pd.subs.forEach((sd, l) => {
+                                    dashaHtml += `
+                                    <tr class="sd-${i}-${j}-${k} hidden bg-white hover:bg-gray-50 text-gray-500 border-b border-gray-100 text-[11px] cursor-pointer" onclick="toggleDasha('prd-${i}-${j}-${k}-${l}')">
+                                        <td class="p-2 text-left pl-24 border border-gray-100"><span id="icon-prd-${i}-${j}-${k}-${l}" class="mr-2 border border-gray-300 px-1 text-[10px]">+</span>- ${sd.lord}</td>
                                         <td class="p-2 border border-gray-100">${sd.start}</td>
                                         <td class="p-2 border border-gray-100">${sd.end}</td>
                                     </tr>`;
-                                sd.subs.forEach((prd, m) => {
-                                    let prdBg = prd.active ? 'bg-green-200 font-bold text-black' : 'bg-gray-50 hover:bg-gray-100 text-gray-400';
-                                    let prdHidden = sd.active ? '' : 'hidden';
-                                    dashaHtml += `
-                                        <tr class="prd-${i}-${j}-${k}-${l} ${prdHidden} ${prdBg} border-b border-gray-50 text-[10px]">
-                                            <td class="p-2 text-left pl-20 border border-gray-50">↳ ${prd.lord}</td>
+                                    sd.subs.forEach((prd, m) => {
+                                        dashaHtml += `
+                                        <tr class="prd-${i}-${j}-${k}-${l} hidden bg-gray-50 text-gray-400 border-b border-gray-50 text-[10px]">
+                                            <td class="p-2 text-left pl-32 border border-gray-50">▪ ${prd.lord}</td>
                                             <td class="p-2 border border-gray-50">${prd.start}</td>
                                             <td class="p-2 border border-gray-50">${prd.end}</td>
                                         </tr>`;
+                                    });
                                 });
                             });
                         });
-                    });
+                    }
                 });
                 document.getElementById('tb-dasha').innerHTML = dashaHtml;
 
@@ -1155,383 +1508,439 @@ HTML_PAGE = """
 </html>
 """
 
-# --- FLASK ROUTES ---
+# --- API ROUTES ---
 
-@app.route('/', methods=['GET'])
-def home():
-    return HTML_PAGE
+@app.route('/')
+def index():
+    return render_template_string(HTML_PAGE)
 
 @app.route('/api/location', methods=['POST'])
-def fetch_location_api():
-    city_name = request.json.get('city', '').strip().title()
-    if not city_name: return jsonify({"status": "error"})
-    matches = gc.get_cities_by_name(city_name)
+def api_location():
+    city = request.json.get('city', '').title()
+    matches = gc.get_cities_by_name(city)
     if matches:
-        city_data_list = []
-        for match in matches: city_data_list.extend(match.values())
-        if city_data_list:
-            bm = sorted(city_data_list, key=lambda x: x.get('population', 0), reverse=True)[0]
-            tz = bm.get('timezone') or tf.timezone_at(lng=bm['longitude'], lat=bm['latitude']) or 'UTC'
-            return jsonify({"status": "success", "lat": f"{bm['latitude']:.4f}", "lon": f"{bm['longitude']:.4f}", "tz": tz})
+        city_list = [val for m in matches for val in m.values()]
+        if city_list:
+            best = sorted(city_list, key=lambda x: x.get('population', 0), reverse=True)[0]
+            lat, lon = best['latitude'], best['longitude']
+            tz = best.get('timezone') or tf.timezone_at(lng=lon, lat=lat) or 'UTC'
+            return jsonify({'status': 'success', 'lat': f"{lat:.4f}", 'lon': f"{lon:.4f}", 'tz': tz})
     try:
-        resp = requests.get(f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1", headers={'User-Agent': 'KPAstroWeb'}, timeout=5).json()
-        if resp:
-            lat, lon = float(resp[0]['lat']), float(resp[0]['lon'])
-            return jsonify({"status": "success", "lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "tz": tf.timezone_at(lng=lon, lat=lat) or 'UTC'})
+        url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1"
+        res = requests.get(url, headers={'User-Agent': 'KPAstroApp/1.0'}, timeout=5).json()
+        if res:
+            lat, lon = float(res[0]['lat']), float(res[0]['lon'])
+            tz = tf.timezone_at(lng=lon, lat=lat) or 'UTC'
+            return jsonify({'status': 'success', 'lat': f"{lat:.4f}", 'lon': f"{lon:.4f}", 'tz': tz})
     except: pass
-    return jsonify({"status": "error"})
+    return jsonify({'status': 'error'})
 
-@app.route('/api/ssub_tracker', methods=['POST'])
-def ssub_tracker_api():
+@app.route('/api/save_client', methods=['POST'])
+def api_save_client():
     data = request.json
-    try:
-        tz = pytz.timezone(data['tz'])
-        dt_from = datetime.strptime(data['start'], "%d-%m-%Y %H:%M:%S")
-        dt_to = datetime.strptime(data['end'], "%d-%m-%Y %H:%M:%S")
+    name, dob, tob, city = data.get('name'), data.get('dob'), data.get('tob'), data.get('city')
+    lat, lon, tz, horary = data.get('lat'), data.get('lon'), data.get('tz'), data.get('horary')
+    
+    file_exists = os.path.isfile(DB_FILE)
+    next_id = 1
+    if file_exists:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("Name") == name and row.get("DOB") == dob and row.get("Time") == tob:
+                    return jsonify({"status": "error", "message": "Chart already saved!"})
+                try:
+                    cid = int(row.get("ID", 0))
+                    if cid >= next_id: next_id = cid + 1
+                except ValueError: pass
+                
+    with open(DB_FILE, "a", newline='', encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["ID", "Name", "DOB", "Time", "City", "Latitude", "Longitude", "Horary", "Timezone", "Saved On"])
+        writer.writerow([next_id, name, dob, tob, city, lat, lon, horary, tz, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
         
-        if (dt_to - dt_from).days > 3:
-            return jsonify({"status": "error", "message": "Limit search to 3 days maximum."})
+    return jsonify({"status": "success", "message": "Saved successfully!"})
 
-        aya = data.get('aya', 'K.P.')
-        if aya == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
-        elif aya == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
-        else: swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
-        flags = swe.FLG_SIDEREAL
-
-        if data.get('rahu') == "True": PLANETS["Rahu"] = swe.TRUE_NODE
-        else: PLANETS["Rahu"] = swe.MEAN_NODE
-
-        planet_list = ["Moon", "Sun", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
-        abbr_map = {"Sun":"Su", "Moon":"Mo", "Mars":"Ma", "Mercury":"Me", "Jupiter":"Ju", "Venus":"Ve", "Saturn":"Sa", "Rahu":"Ra", "Ketu":"Ke"}
-
-        def get_lon(dt, p):
-            utc = tz.localize(dt).astimezone(pytz.utc)
-            jd = swe.julday(utc.year, utc.month, utc.day, utc.hour + utc.minute/60.0 + utc.second/3600.0)
-            if p == "Ketu": return (swe.calc_ut(jd, PLANETS["Rahu"], flags)[0][0] + 180.0) % 360.0
-            return swe.calc_ut(jd, PLANETS[p], flags)[0][0]
-
-        states = {}
-        results = {p: [] for p in planet_list}
-        current_dt = dt_from
-        
-        for p in planet_list:
-            states[p] = get_kp_lords(get_lon(current_dt, p))
-
-        delta_min = timedelta(minutes=1)
-        
-        while current_dt < dt_to:
-            next_dt = current_dt + delta_min
-            for p in planet_list:
-                new_state = get_kp_lords(get_lon(next_dt, p))
-                if new_state != states[p]:
-                    exact_dt = current_dt
-                    for sec in range(1, 61):
-                        test_dt = current_dt + timedelta(seconds=sec)
-                        t_state = get_kp_lords(get_lon(test_dt, p))
-                        if t_state != states[p]:
-                            exact_dt = test_dt
-                            states[p] = t_state
-                            val_str = f"{abbr_map.get(t_state[0], t_state[0][:2])}/{abbr_map.get(t_state[1], t_state[1][:2])}/{abbr_map.get(t_state[2], t_state[2][:2])}"
-                            results[p].append({
-                                "date": exact_dt.strftime("%d %b"),
-                                "time": exact_dt.strftime("%H:%M:%S"),
-                                "val": val_str
-                            })
-                            break
-            current_dt = next_dt
-
-        return jsonify({"status": "success", "results": results})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
+@app.route('/api/get_clients', methods=['GET'])
+def api_get_clients():
+    clients = []
+    if os.path.isfile(DB_FILE):
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader: clients.append(row)
+    return jsonify({"status": "success", "clients": clients})
 
 @app.route('/api/forward_check', methods=['POST'])
-def forward_check():
+def api_forward_check():
     data = request.json
-    try:
-        dt = datetime.strptime(data['date'], "%d-%m-%Y")
-        tz = pytz.timezone(data['tz'])
-        p_id = PLANETS.get(data['planet'], swe.SUN)
+    try: 
+        # Parse the date and set it to 12:00 PM Local Time to prevent UTC midnight boundary skipping
+        start_dt = datetime.strptime(data['date'], "%d-%m-%Y").replace(hour=12, minute=0, second=0)
+    except: 
+        return jsonify({'status': 'error', 'message': 'Invalid date format'})
         
-        aya = data.get('aya', 'K.P.')
-        if aya == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
-        elif aya == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
-        else: swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
-        flags = swe.FLG_SIDEREAL
+    p_name = data['planet']
+    p_id = PLANETS.get(p_name, swe.SUN)
+    
+    tt = data['t_type']
+    if tt == "Sign": 
+        target_lon = float(data['t_val']) * 30.0
+        span = 30.0
+    elif tt == "Nakshatra": 
+        target_lon = float(data['t_val']) * (360.0 / 27.0)
+        span = 360.0 / 27.0
+    else: 
+        target_lon = float(data['t_val']) % 360.0
+        span = 360.0
 
-        t_type = data['t_type']
-        t_val_input = float(data['t_val'])
-        if t_type in ["Sign", "Nakshatra"]:
-            t_val = t_val_input - 1
+    flags = swe.FLG_SIDEREAL | swe.FLG_SPEED if data['aya'] != "Western" else swe.FLG_SPEED
+    if data['aya'] == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
+    elif data['aya'] == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
+    elif data['aya'] == "K.P.": swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
+
+    tz = pytz.timezone(data['tz'])
+    curr_dt = start_dt
+    prev_in_target = None
+    
+    for i in range(36500):
+        utc = tz.localize(curr_dt).astimezone(pytz.utc)
+        # Fix 1: Use exact hour/minute/second mathematically instead of defaulting to 0
+        jd = swe.julday(utc.year, utc.month, utc.day, utc.hour + utc.minute/60.0 + utc.second/3600.0)
+        
+        # Fix 2: Properly handle Ketu calculation (180 degrees from Rahu)
+        if p_name == "Ketu":
+            r_id = PLANETS.get("Rahu", swe.MEAN_NODE)
+            lon = (swe.calc_ut(jd, r_id, flags)[0][0] + 180.0) % 360.0
         else:
-            t_val = t_val_input
+            lon = swe.calc_ut(jd, p_id, flags)[0][0]
+            
+        if tt in ["Sign", "Nakshatra"]:
+            is_in_target = (int(lon / span) == int(data['t_val']))
+        else:
+            diff = abs(lon - target_lon)
+            is_in_target = (diff < 1.0 or diff > 359.0)
+            
+        # Fix 3: Logic to catch the exact ENTRY (handles case if planet is already in target on Day 1)
+        if is_in_target:
+            if prev_in_target is False:
+                return jsonify({'status': 'success', 'result': f"{p_name} enters target around {curr_dt.strftime('%d-%m-%Y')}"})
         
-        span = 30.0 if t_type == "Sign" else (360.0/27.0) if t_type == "Nakshatra" else 360.0
-        target_lon = t_val * span if t_type != "Degree" else t_val % 360.0
-
-        msg_prefix = ""
-        prev_match = None
-
-        for i in range(36500): # 100 years max
-            utc = tz.localize(dt).astimezone(pytz.utc)
-            jd = swe.julday(utc.year, utc.month, utc.day, 12.0)
+        if prev_in_target is None:
+            prev_in_target = is_in_target
+        else:
+            prev_in_target = is_in_target
             
-            lon = (swe.calc_ut(jd, PLANETS["Rahu"], flags)[0][0] + 180.0)%360.0 if data['planet'] == "Ketu" else swe.calc_ut(jd, p_id, flags)[0][0]
-            
-            curr_match = False
-            if t_type in ["Sign", "Nakshatra"]:
-                curr_match = (int(lon / span) == t_val)
-            else:
-                diff = abs(lon - target_lon)
-                curr_match = (diff < 1.0 or diff > 359.0)
-
-            if prev_match is None:
-                prev_match = curr_match
-                if curr_match and i == 0:
-                    msg_prefix = "Already in target on Start Date! Next entry: "
-
-            if curr_match and not prev_match and i > 0:
-                result_str = f"{data['planet']} enters target around {dt.strftime('%d-%m-%Y')}"
-                if msg_prefix:
-                    result_str = msg_prefix + dt.strftime('%d-%m-%Y')
-                return jsonify({"status": "success", "result": result_str})
-            
-            prev_match = curr_match
-            dt += timedelta(days=1)
-            
-        return jsonify({"status": "success", "result": "Target not reached within 100 years."})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+        curr_dt += timedelta(days=1)
+        
+    return jsonify({'status': 'success', 'result': "Target not reached within 100 years."})
 
 @app.route('/api/retro_report', methods=['POST'])
-def retro_report():
+def api_retro_report():
     data = request.json
     try:
-        curr = datetime.strptime(data['start'], "%d-%m-%Y")
+        start = datetime.strptime(data['start'], "%d-%m-%Y")
         end = datetime.strptime(data['end'], "%d-%m-%Y")
-        tz = pytz.timezone(data['tz'])
-        p_id = PLANETS.get(data['planet'])
-        flags = swe.FLG_SPEED | swe.FLG_SIDEREAL
-        
-        prev_speed = None
-        results = []
-        
-        while curr <= end:
-            utc = tz.localize(curr).astimezone(pytz.utc)
-            jd = swe.julday(utc.year, utc.month, utc.day, 12.0)
-            speed = swe.calc_ut(jd, p_id, flags)[0][3]
-            
-            if prev_speed is not None:
-                if prev_speed > 0 and speed < 0: results.append({"date": curr.strftime("%d-%b-%Y"), "status": "Direct ➔ RETROGRADE"})
-                elif prev_speed < 0 and speed > 0: results.append({"date": curr.strftime("%d-%b-%Y"), "status": "Retro ➔ DIRECT"})
-            prev_speed = speed
-            curr += timedelta(days=1)
-            
-        return jsonify({"status": "success", "results": results})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+    except: return jsonify({'status': 'error', 'message': 'Invalid date'})
+    p_id = PLANETS.get(data['planet'])
+    flags = swe.FLG_SIDEREAL | swe.FLG_SPEED if data['aya'] != "Western" else swe.FLG_SPEED
+    if data['aya'] == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
+    elif data['aya'] == "K.P.": swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
+
+    curr, prev_speed, res = start, None, []
+    while curr <= end:
+        jd = swe.julday(curr.year, curr.month, curr.day, 12)
+        speed = swe.calc_ut(jd, p_id, flags)[0][3]
+        if prev_speed is not None:
+            if prev_speed > 0 and speed < 0: res.append({'date': curr.strftime("%d-%b-%Y"), 'status': "Direct ➔ RETROGRADE"})
+            elif prev_speed < 0 and speed > 0: res.append({'date': curr.strftime("%d-%b-%Y"), 'status': "Retro ➔ DIRECT"})
+        prev_speed = speed
+        curr += timedelta(days=1)
+    return jsonify({'status': 'success', 'results': res})
+
+@app.route('/api/ssub_tracker', methods=['POST'])
+def api_ssub_tracker():
+    data = request.json
+    try:
+        dt_from = datetime.strptime(data['start'], "%d-%m-%Y %H:%M:%S")
+        dt_to = datetime.strptime(data['end'], "%d-%m-%Y %H:%M:%S")
+    except: return jsonify({'status': 'error', 'message': 'Invalid date/time'})
+    if (dt_to - dt_from).days > 3: return jsonify({'status': 'error', 'message': 'Limit search to 3 days max.'})
+
+    flags = swe.FLG_SIDEREAL | swe.FLG_SPEED if data['aya'] != "Western" else swe.FLG_SPEED
+    if data['aya'] == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
+    elif data['aya'] == "K.P.": swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
+    r_node = swe.TRUE_NODE if data['rahu'] == "True" else swe.MEAN_NODE
+    tz = pytz.timezone(data['tz'])
+
+    def get_lon(dt, p):
+        utc = tz.localize(dt).astimezone(pytz.utc)
+        jd = swe.julday(utc.year, utc.month, utc.day, utc.hour + utc.minute/60 + utc.second/3600)
+        if p == "Ketu": return (swe.calc_ut(jd, r_node, flags)[0][0] + 180.0) % 360.0
+        return swe.calc_ut(jd, PLANETS[p], flags)[0][0]
+
+    plist = ["Moon", "Sun", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
+    abbr = {"Sun":"Su", "Moon":"Mo", "Mars":"Ma", "Mercury":"Me", "Jupiter":"Ju", "Venus":"Ve", "Saturn":"Sa", "Rahu":"Ra", "Ketu":"Ke"}
+    current_dt = dt_from
+    states = {p: get_kp_lords(get_lon(current_dt, p)) for p in plist}
+    results = {p: [] for p in plist}
+    
+    while current_dt < dt_to:
+        next_dt = current_dt + timedelta(minutes=1)
+        for p in plist:
+            st, sb, ssb = get_kp_lords(get_lon(next_dt, p))
+            if (st, sb, ssb) != states[p]:
+                exact_dt = current_dt
+                for sec in range(1, 61):
+                    test_dt = current_dt + timedelta(seconds=sec)
+                    t_st, t_sb, t_ssb = get_kp_lords(get_lon(test_dt, p))
+                    if (t_st, t_sb, t_ssb) != states[p]:
+                        exact_dt = test_dt
+                        states[p] = (t_st, t_sb, t_ssb)
+                        results[p].append({"val": f"{abbr[t_st]}/{abbr[t_sb]}/{abbr[t_ssb]}", "date": exact_dt.strftime("%d-%m-%Y"), "time": exact_dt.strftime("%H:%M:%S")})
+                        break
+        current_dt = next_dt
+    return jsonify({'status': 'success', 'results': results})
 
 @app.route('/api/calculate', methods=['POST'])
-def calculate_api():
-    data = request.json
+def api_calculate():
+    d = request.json
     try:
-        aya = data.get('aya', 'K.P.')
-        if aya == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
-        elif aya == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
-        else: swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
-        flags = swe.FLG_SIDEREAL | swe.FLG_SPEED
+        dmy, hms = d['calc_date'].split('-'), d['calc_time'].split(':')
+        dt_obj = datetime(int(dmy[2]), int(dmy[1]), int(dmy[0]), int(hms[0]), int(hms[1]), int(hms[2]))
+        ndmy, nhms = d['natal_date'].split('-'), d['natal_time'].split(':')
+        natal_dt = datetime(int(ndmy[2]), int(ndmy[1]), int(ndmy[0]), int(nhms[0]), int(nhms[1]), int(nhms[2]))
+    except: return jsonify({'status': 'error', 'message': 'Date formatting error.'})
 
-        tz = pytz.timezone(data['tz'])
-        natal_dt = datetime.strptime(f"{data['natal_date']} {data['natal_time']}", "%d-%m-%Y %H:%M:%S")
-        natal_utc = tz.localize(natal_dt).astimezone(pytz.utc)
-        natal_jd = swe.julday(natal_utc.year, natal_utc.month, natal_utc.day, natal_utc.hour + natal_utc.minute/60.0 + natal_utc.second/3600.0)
-        
-        lat, lon = float(data['lat']), float(data['lon'])
-        natal_cusps, _ = swe.houses_ex(natal_jd, lat, lon, b'P', flags=flags)
-        true_asc_sign = int(natal_cusps[0] / 30) + 1
+    lat, lon = float(d['lat']), float(d['lon'])
+    tz = pytz.timezone(d['tz'])
+    utc_calc = tz.localize(dt_obj).astimezone(pytz.utc)
+    jd = swe.julday(utc_calc.year, utc_calc.month, utc_calc.day, utc_calc.hour + utc_calc.minute/60.0 + utc_calc.second/3600.0)
+    
+    flags = swe.FLG_SIDEREAL | swe.FLG_SPEED if d['aya'] != "Western" else swe.FLG_SPEED
+    if d['aya'] == "Chitrapaksha": swe.set_sid_mode(swe.SIDM_LAHIRI)
+    elif d['aya'] == "Raman": swe.set_sid_mode(swe.SIDM_RAMAN)
+    elif d['aya'] == "K.P.": swe.set_sid_mode(swe.SIDM_KRISHNAMURTI)
+    
+    r_node = swe.TRUE_NODE if d['rahu'] == "True" else swe.MEAN_NODE
+    
+    cusps = get_placidus_cusps(jd, lat, lon, d['mode'], int(d['horary']), flags)
+    rot = int(d['rot_house']) - 1
+    
+    orig_asc = cusps[0]
+    orig_asc_sign = int(orig_asc / 30) + 1
+    rotated_cusps = [cusps[(i + rot) % 12] for i in range(12)]
+    asc_sign = int(rotated_cusps[0] / 30) + 1
+    
+    lagna_signs = [((asc_sign + i - 1) % 12) + 1 for i in range(12)]
+    chalit_signs = [int(c / 30) + 1 for c in rotated_cusps]
+    
+    # Calculate Natal Moon for Navtara Anchoring
+    utc_natal = tz.localize(natal_dt).astimezone(pytz.utc)
+    jd_natal = swe.julday(utc_natal.year, utc_natal.month, utc_natal.day, utc_natal.hour + utc_natal.minute/60.0 + utc_natal.second/3600.0)
+    natal_moon_lon = swe.calc_ut(jd_natal, swe.MOON, flags)[0][0]
 
-        calc_dt = datetime.strptime(f"{data['calc_date']} {data['calc_time']}", "%d-%m-%Y %H:%M:%S")
-        calc_utc = tz.localize(calc_dt).astimezone(pytz.utc)
-        calc_jd = swe.julday(calc_utc.year, calc_utc.month, calc_utc.day, calc_utc.hour + calc_utc.minute/60.0 + calc_utc.second/3600.0)
+    p_data = {}
+    moon_lon = 0
+    for p_name, p_id in PLANETS.items():
+        if p_name == "Ketu": continue
+        actual_id = r_node if p_name == "Rahu" else p_id
+        calc_res = swe.calc_ut(jd, actual_id, flags)[0]
+        ln, speed = calc_res[0], calc_res[3]
+        retro = speed < 0 and p_name not in ["Sun", "Moon"]
+        p_data[p_name] = {'lon': ln, 'retro': retro}
+        if p_name == "Moon": moon_lon = ln
+        if p_name == "Rahu": p_data["Ketu"] = {'lon': (ln + 180.0) % 360.0, 'retro': retro}
 
-        cusps_raw, _ = swe.houses_ex(calc_jd, lat, lon, b'P', flags=flags)
-        mode = data.get('mode', 'Natal')
-        
-        current_eval_dt = datetime.now(tz).replace(tzinfo=None) if mode == "Natal" else calc_dt
-        
-        try:
-            if mode == "Horary" and 1 <= int(data.get('horary', 1)) <= 249:
-                diff = get_horary_ascendant(data['horary']) - cusps_raw[0]
-                cusps_raw = [(c + diff) % 360 for c in cusps_raw]
-        except: pass
+    h_lagna, h_chalit = {i: [] for i in range(1, 13)}, {i: [] for i in range(1, 13)}
+    
+    l_h_asc = (orig_asc_sign - asc_sign + 12) % 12 + 1
+    h_lagna[l_h_asc].append("Asc")
+    for i in range(12):
+        s, e = rotated_cusps[i], rotated_cusps[(i+1)%12]
+        if (s < e and s <= orig_asc < e) or (s > e and (orig_asc >= s or orig_asc < e)):
+            h_chalit[i+1].append("Asc"); break
 
-        rot = int(data.get('rot_house', 1)) - 1
-        if rot > 0: cusps_raw = [cusps_raw[(i + rot) % 12] for i in range(12)]
-
-        asc_sign = int(cusps_raw[0] / 30) + 1
-        lagna_signs = [((asc_sign + i - 1) % 12) + 1 for i in range(12)]
-        chalit_signs = [int(c / 30) + 1 for c in cusps_raw]
-
-        nak_span = 360.0 / 27.0
-        cusp_res = []
+    for p, v in p_data.items():
+        pn_disp = p + ("(R)" if v['retro'] else "")
+        p_sgn = int(v['lon']/30) + 1
+        l_h = (p_sgn - asc_sign + 12) % 12 + 1
+        h_lagna[l_h].append(pn_disp)
         for i in range(12):
-            c_lon = cusps_raw[i]
-            st, sb, ssb = get_kp_lords(c_lon)
-            nak_name = NAKSHATRAS[int(c_lon / nak_span)]
-            cusp_res.append([i+1, ZODIAC[int(c_lon/30)], format_dms(c_lon), nak_name, st, sb, ssb])
+            s, e = rotated_cusps[i], rotated_cusps[(i+1)%12]
+            if (s < e and s <= v['lon'] < e) or (s > e and (v['lon'] >= s or v['lon'] < e)):
+                h_chalit[i+1].append(pn_disp); break
 
-        if data.get('rahu') == "True": PLANETS["Rahu"] = swe.TRUE_NODE
-        else: PLANETS["Rahu"] = swe.MEAN_NODE
+    lk_age = int(d['age'])
+    c_birth, _ = swe.houses_ex(jd_natal, lat, lon, b'P', flags=flags)
+    t_asc_sgn = int(c_birth[0] / 30) + 1
+    v_houses = {i: [] for i in range(1, 13)}
+    for p, p_id in PLANETS.items():
+        if p == "Ketu": continue
+        c_res = swe.calc_ut(jd_natal, p_id, flags)[0]
+        n_house = (int(c_res[0]/30) + 1 - t_asc_sgn + 12) % 12 + 1
+        v_h = LK_MATRIX[lk_age - 1][n_house - 1]
+        v_houses[v_h].append(p)
+        if p == "Rahu":
+            kn_house = (int(((c_res[0] + 180)%360)/30) + 1 - t_asc_sgn + 12) % 12 + 1
+            v_houses[LK_MATRIX[lk_age - 1][kn_house - 1]].append("Ketu")
 
-        planet_res, p_data = [], {}
-        rahu_lon = 0
-        h_lagna, h_chalit = {i: [] for i in range(1, 13)}, {i: [] for i in range(1, 13)}
+    try: fr_dt = natal_dt.replace(year=natal_dt.year + lk_age - 1)
+    except: fr_dt = natal_dt + timedelta(days=365.25 * (lk_age - 1))
+    try: to_dt = natal_dt.replace(year=natal_dt.year + lk_age)
+    except: to_dt = natal_dt + timedelta(days=365.25 * lk_age)
+    lk_range = f"{fr_dt.strftime('%d-%m-%Y')} to {(to_dt - timedelta(days=1)).strftime('%d-%m-%Y')}"
 
-        for name, p_id in PLANETS.items():
-            calc, _ = swe.calc_ut(calc_jd, p_id, flags)
-            p_lon = calc[0]
-            if name == "Rahu": rahu_lon = p_lon
-            is_retro = calc[3] < 0 if name not in ["Sun", "Moon"] else False
-            disp = f"{name}(R)" if is_retro else name
-            st, sb, ssb = get_kp_lords(p_lon)
-            nak_name = NAKSHATRAS[int(p_lon / nak_span)]
-            
-            planet_res.append([disp, ZODIAC[int(p_lon/30)], format_dms(p_lon), nak_name, st, sb, ssb])
-            p_data[name] = {"lon": p_lon, "st": st, "sb": sb, "retro": is_retro}
-            
-            h_lagna[(int(p_lon/30) + 1 - asc_sign + 12) % 12 + 1].append(name[:2])
-            for h_idx in range(12):
-                h_s, h_e = cusps_raw[h_idx], cusps_raw[(h_idx + 1) % 12]
-                if (h_s < h_e and h_s <= p_lon < h_e) or (h_s > h_e and (p_lon >= h_s or p_lon < h_e)):
-                    h_chalit[h_idx+1].append(name[:2]); break
+    planets_arr = []
+    p_order = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
+    raw_planets = {}
+    for p in p_order:
+        ln = p_data[p]['lon']
+        raw_planets[p] = ln
+        st, sb, ssb = get_kp_lords(ln)
+        n_idx = int(ln / (360/27.0))
+        planets_arr.append([p + ("(R)" if p_data[p]['retro'] else ""), ZODIAC[int(ln/30)], format_dms(ln), NAKSHATRAS[n_idx], st, sb, ssb])
+        p_data[p]['st'] = st; p_data[p]['sb'] = sb
 
-        k_lon = (rahu_lon + 180.0) % 360.0
-        st, sb, ssb = get_kp_lords(k_lon)
-        k_nak_name = NAKSHATRAS[int(k_lon / nak_span)]
-        planet_res.append(["Ketu(R)", ZODIAC[int(k_lon/30)], format_dms(k_lon), k_nak_name, st, sb, ssb])
-        p_data["Ketu"] = {"lon": k_lon, "st": st, "sb": sb, "retro": True}
-        h_lagna[(int(k_lon/30) + 1 - asc_sign + 12) % 12 + 1].append("Ke")
-        for h_idx in range(12):
-            h_s, h_e = cusps_raw[h_idx], cusps_raw[(h_idx + 1) % 12]
-            if (h_s < h_e and h_s <= k_lon < h_e) or (h_s > h_e and (k_lon >= h_s or k_lon < h_e)):
-                h_chalit[h_idx+1].append("Ke"); break
+    cusps_arr = []
+    for i in range(12):
+        ln = rotated_cusps[i]
+        st, sb, ssb = get_kp_lords(ln)
+        n_idx = int(ln / (360/27.0))
+        cusps_arr.append([i+1, ZODIAC[chalit_signs[i]-1], format_dms(ln), NAKSHATRAS[n_idx], st, sb, ssb])
 
-        nadi_res = []
-        nadi_order = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]
-        base_sigs = {}
-        for p in nadi_order:
-            lon = p_data[p]['lon']
-            occ = 1
-            for i in range(12):
-                h_s, h_e = cusps_raw[i], cusps_raw[(i + 1) % 12]
-                if (h_s < h_e and h_s <= lon < h_e) or (h_s > h_e and (lon >= h_s or lon < h_e)): occ = i+1; break
-            owns = [i+1 for i in range(12) if SIGN_LORDS[chalit_signs[i]-1] == p] if p not in ["Rahu", "Ketu"] else []
-            base_sigs[p] = {'occ': occ, 'owns': owns}
+    def get_occ(lon):
+        for i in range(12):
+            s, e = rotated_cusps[i], rotated_cusps[(i+1)%12]
+            if (s < e and s <= lon < e) or (s > e and (lon >= s or lon < e)): return i+1
+        return 1
 
-        for p in nadi_order:
-            sig = sorted(list(set([base_sigs[p]['occ']] + base_sigs[p]['owns'])))
-            st = p_data[p]['st']
-            st_sig = sorted(list(set([base_sigs[st]['occ']] + base_sigs[st]['owns'])))
-            sb = p_data[p]['sb']
-            sb_sig = sorted(list(set([base_sigs[sb]['occ']] + base_sigs[sb]['owns'])))
-            
-            nadi_res.append([
-                p, 
-                ", ".join(map(str, sig)) or "-", 
-                st, 
-                ", ".join(map(str, st_sig)) or "-", 
-                sb, 
-                ", ".join(map(str, sb_sig)) or "-"
-            ])
+    b_sigs = {}
+    for p in p_order:
+        occ = get_occ(p_data[p]['lon'])
+        owns = [i+1 for i in range(12) if SIGN_LORDS[chalit_signs[i]-1] == p] if p not in ["Rahu", "Ketu"] else []
+        b_sigs[p] = {'occ': occ, 'owns': owns, 'sl': SIGN_LORDS[int(p_data[p]['lon']/30)]}
 
-        vastu_dirs = [SIGN_PROPS[s]["dir"] for s in range(1, 13)]
-        vastu_p2c = []
-        for r_title in ["Zodiac", "Lord", "Tatwa", "Mobility", "Sign No", "House"]:
-            row = [r_title]
-            for s_idx in range(1, 13):
-                h_num = (s_idx - asc_sign + 12) % 12 + 1
-                if r_title == "Zodiac": row.append(ZODIAC[s_idx-1][:4])
-                elif r_title == "Lord": row.append(SIGN_LORDS[s_idx-1][:3])
-                elif r_title == "Tatwa": row.append(SIGN_PROPS[s_idx]["tatwa"])
-                elif r_title == "Mobility": row.append(SIGN_PROPS[s_idx]["mob"][:3])
-                elif r_title == "Sign No": row.append(f"{s_idx}({SIGN_PROPS[s_idx]['gender']})")
-                elif r_title == "House": row.append(str(h_num))
-            vastu_p2c.append(row)
+    f_sigs = {}
+    for p in p_order:
+        s_list = [b_sigs[p]['occ']] + b_sigs[p]['owns']
+        if p in ["Rahu", "Ketu"]:
+            n_sgn = int(p_data[p]['lon']/30)+1
+            sl = b_sigs[p]['sl']
+            if sl in b_sigs: s_list.extend([b_sigs[sl]['occ']] + b_sigs[sl]['owns'])
+            for op, odata in b_sigs.items():
+                if op == p or op in ["Rahu", "Ketu"]: continue
+                o_sgn = int(p_data[op]['lon']/30)+1
+                if o_sgn == n_sgn: s_list.extend([odata['occ']] + odata['owns'])
+                dist = (n_sgn - o_sgn + 12) % 12
+                dist = 12 if dist == 0 else dist + 1
+                if dist in {"Sun":[7],"Moon":[7],"Mercury":[7],"Venus":[7],"Mars":[4,7,8],"Jupiter":[5,7,9],"Saturn":[3,7,10]}.get(op, [7]):
+                    s_list.extend([odata['occ']] + odata['owns'])
+        f_sigs[p] = ", ".join(map(str, sorted(list(set(s_list)))))
 
-        for p in ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]:
-            row = [p[:3]]
-            p_lon = p_data[p]['lon']
-            for s_idx in range(1, 13):
-                h_num = (s_idx - asc_sign + 12) % 12 + 1
-                diff = (cusps_raw[h_num - 1] - p_lon) % 360
-                shortest = diff if diff <= 180 else 360 - diff
-                val_str = f"{diff:.2f}"
-                if (diff < 360 - 3.0) and (diff > 3.0) and (abs(diff - 270) > 3.0):
-                    if any(abs(shortest - d) <= 3.0 for d in [45, 90, 135, 180]): val_str += "*" 
-                    elif any(abs(shortest - d) <= 3.0 for d in [30, 60, 120]): val_str += "+" 
-                row.append(val_str)
-            vastu_p2c.append(row)
+    nadi_arr = []
+    for p in p_order:
+        st, sb = p_data[p]['st'], p_data[p]['sb']
+        nadi_arr.append([p, f_sigs[p], st, f_sigs.get(st, "-"), sb, f_sigs.get(sb, "-")])
 
-        vastu_p2p = []
-        for i in range(9):
-            for j in range(i+1, 9):
-                p1, p2 = nadi_order[i], nadi_order[j]
-                lon1, lon2 = p_data[p1]['lon'], p_data[p2]['lon']
-                d1 = SIGN_PROPS[int(lon1/30)+1]["dir"]
-                d2 = SIGN_PROPS[int(lon2/30)+1]["dir"]
-                diff = (lon2 - lon1) % 360
-                sh = diff if diff <= 180 else 360 - diff
-                val_str = f"{diff:.2f}"
-                if any(abs(sh - d) <= 3.0 for d in [45, 90, 135, 180]): val_str += "*"
-                elif any(abs(sh - d) <= 3.0 for d in [30, 60, 120]): val_str += "+"
-                vastu_p2p.append([p1[:3], d1, p2[:3], d2, val_str])
+    hits_p2p, hits_p2h = [], []
+    for i in range(len(p_order)):
+        for j in range(i+1, len(p_order)):
+            p1, p2 = p_order[i], p_order[j]
+            diff = abs(p_data[p1]['lon'] - p_data[p2]['lon'])
+            if diff > 180: diff = 360 - diff
+            for a_deg, (a_nm, nat) in DEGREE_ASPECTS.items():
+                if abs(diff - a_deg) <= 3.0: hits_p2p.append([p1, p2, a_nm, f"{diff:.2f}°", nat])
 
-        hits_p2p, hits_p2h = [], []
-        p_keys = list(p_data.keys())
-        for i in range(len(p_keys)):
-            for j in range(i+1, len(p_keys)):
-                p1, p2 = p_keys[i], p_keys[j]
-                diff = abs(p_data[p1]['lon'] - p_data[p2]['lon'])
-                diff = 360 - diff if diff > 180 else diff
-                for asp_deg, (asp_name, nature) in DEGREE_ASPECTS.items():
-                    if abs(diff - asp_deg) <= 3.0: hits_p2p.append([p1, p2, asp_name, f"{diff:.2f}°", nature])
+    for p in p_order:
+        for i in range(12):
+            diff = abs(p_data[p]['lon'] - rotated_cusps[i])
+            if diff > 180: diff = 360 - diff
+            for a_deg, (a_nm, nat) in DEGREE_ASPECTS.items():
+                if abs(diff - a_deg) <= 3.0: hits_p2h.append([p, f"House {i+1}", a_nm, f"{diff:.2f}°", nat])
 
-        for p_name, p_info in p_data.items():
-            for h_idx in range(12):
-                diff = abs(p_info['lon'] - cusps_raw[h_idx])
-                diff = 360 - diff if diff > 180 else diff
-                for asp_deg, (asp_name, nature) in DEGREE_ASPECTS.items():
-                    if abs(diff - asp_deg) <= 3.0: hits_p2h.append([p_name, f"H {h_idx+1}", asp_name, f"{diff:.2f}°", nature])
+    v_dirs = [SIGN_PROPS[s]["dir"] for s in range(1, 13)]
+    
+    vastu_p2c = []
+    vastu_p2c.append(["Zodiac"] + [ZODIAC[s-1][:4] for s in range(1, 13)])
+    vastu_p2c.append(["Lord"] + [SIGN_LORDS[s-1] for s in range(1, 13)])
+    vastu_p2c.append(["Tatwa"] + [SIGN_PROPS[s]["tatwa"] for s in range(1, 13)])
+    vastu_p2c.append(["Mobility"] + [SIGN_PROPS[s]["mob"] for s in range(1, 13)])
+    vastu_p2c.append(["Sign No"] + [f"{s}({SIGN_PROPS[s]['gender']})" for s in range(1, 13)])
+    vastu_p2c.append(["House"] + [str((s - asc_sign + 12) % 12 + 1) for s in range(1, 13)])
+    
+    for p in p_order:
+        row = [p]
+        for s in range(1, 13):
+            h_num = (s - asc_sign + 12) % 12 + 1
+            tgt = rotated_cusps[h_num - 1]
+            diff_360 = (tgt - p_data[p]['lon']) % 360
+            shortest = diff_360 if diff_360 <= 180 else 360 - diff_360
+            val = f"{diff_360:.2f}"
+            is_excl = (diff_360 >= 360 - 3.0) or (diff_360 <= 3.0)
+            if not is_excl:
+                if any(abs(shortest - a) <= 3.0 for a in [45, 90, 135, 180]): val += "*"
+                elif any(abs(shortest - a) <= 3.0 for a in [30, 60, 120]): val += "+"
+            row.append(val)
+        vastu_p2c.append(row)
 
-        age = int(data.get('age', 51))
-        try: from_dt = natal_dt.replace(year=natal_dt.year + age - 1)
-        except ValueError: from_dt = natal_dt + timedelta(days=365.25 * (age - 1))
-        try: to_dt = natal_dt.replace(year=natal_dt.year + age)
-        except ValueError: to_dt = natal_dt + timedelta(days=365.25 * age)
-        to_dt = to_dt - timedelta(days=1)
-        lk_range = f"{from_dt.strftime('%d-%m-%Y')} to {to_dt.strftime('%d-%m-%Y')}"
+    vastu_p2p = []
+    for i in range(len(p_order)):
+        for j in range(len(p_order)):
+            if j <= i: continue
+            p1, p2 = p_order[i], p_order[j]
+            d1 = SIGN_PROPS[int(p_data[p1]['lon']/30)+1]["dir"]
+            d2 = SIGN_PROPS[int(p_data[p2]['lon']/30)+1]["dir"]
+            diff_360 = (p_data[p2]['lon'] - p_data[p1]['lon']) % 360
+            shortest = diff_360 if diff_360 <= 180 else 360 - diff_360
+            val = f"{diff_360:.2f}"
+            is_excl = (diff_360 >= 360 - 3.0) or (diff_360 <= 3.0)
+            if not is_excl:
+                if any(abs(shortest - a) <= 3.0 for a in [45, 90, 135, 180]): val += "*"
+                elif any(abs(shortest - a) <= 3.0 for a in [30, 60, 120]): val += "+"
+            vastu_p2p.append([p1, d1, p2, d2, val])
 
-        varshphal = {i: [] for i in range(1, 13)}
-        for p in nadi_order:
-            lon = (p_data["Rahu"]['lon'] + 180)%360 if p == "Ketu" else swe.calc_ut(natal_jd, PLANETS[p], flags)[0][0]
-            varshphal[LK_MATRIX[age - 1][(int(lon/30) + 1 - true_asc_sign + 12) % 12]].append(p[:2])
+    vastu_h2h = []
+    for r_idx in range(1, 13):
+        row = [r_idx]
+        h1_lon = rotated_cusps[r_idx - 1]
+        for c_idx in range(1, 13):
+            if r_idx == c_idx:
+                row.append("-")
+            else:
+                h2_lon = rotated_cusps[c_idx - 1]
+                diff_360 = (h2_lon - h1_lon) % 360
+                shortest = diff_360 if diff_360 <= 180 else 360 - diff_360
+                val = f"{diff_360:.2f}"
+                is_excl = (diff_360 >= 360 - 3.0) or (diff_360 <= 3.0)
+                if not is_excl:
+                    if any(abs(shortest - a) <= 3.0 for a in [45, 90, 135, 180]): val += "*"
+                    elif any(abs(shortest - a) <= 3.0 for a in [30, 60, 120]): val += "+"
+                row.append(val)
+        vastu_h2h.append(row)
 
-        # Dasha (Always Natal Moon)
-        natal_moon_lon = swe.calc_ut(natal_jd, swe.MOON, flags)[0][0]
-        dasha_list, dasha_bal = calculate_dasha(natal_moon_lon, natal_dt, current_eval_dt)
+    dasha_data, bal_str = calculate_dasha(moon_lon, natal_dt, dt_obj)
 
-        return jsonify({
-            "status": "success",
-            "planets": planet_res, "cusps": cusp_res, "nadi": nadi_res,
-            "hits_p2p": hits_p2p, "hits_p2h": hits_p2h,
-            "vastu_dirs": vastu_dirs, "vastu_p2c": vastu_p2c, "vastu_p2p": vastu_p2p,
-            "dasha": dasha_list, "dasha_bal": dasha_bal,
-            "svg_lagna": draw_svg_square(h_lagna, lagna_signs, "Lagna"),
-            "svg_chalit": draw_svg_square(h_chalit, chalit_signs, "Chalit"),
-            "svg_lk": draw_svg_lk(varshphal),
-            "lk_range": lk_range
-        })
-    except Exception as e: return jsonify({"status": "error", "message": str(e)})
+    return jsonify({
+        'status': 'success',
+        'svg_lagna': draw_svg_square(h_lagna, lagna_signs),
+        'svg_chalit': draw_svg_square(h_chalit, chalit_signs),
+        'svg_lk': draw_svg_lk(v_houses),
+        'lk_range': lk_range,
+        'planets': planets_arr,
+        'raw_planets': raw_planets,         # Needed for Forward Check default target
+        'natal_moon_lon': natal_moon_lon,   # Needed for Navtara calculation
+        'cusps': cusps_arr,
+        'nadi': nadi_arr,
+        'hits_p2p': hits_p2p,
+        'hits_p2h': hits_p2h,
+        'vastu_dirs': v_dirs,
+        'vastu_p2c': vastu_p2c,
+        'vastu_p2p': vastu_p2p,
+        'vastu_h2h': vastu_h2h,
+        'dasha': dasha_data,
+        'dasha_bal': bal_str
+    })
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(port=5000, debug=True)
